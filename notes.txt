@@ -1,0 +1,21 @@
+erocksdb.cc:31  - nig_funcs[]
+
+erocksdb.h:28 - OpenReadOnly()
+
+erocksdb_db.cc:966 - Open()
+
+c.h:139 - rocksdb_open()
+c.h:145 - rocksdb_open_for_read_only()
+
+c.cc:505 - rocksdb_open()
+c.cc:533 - rocksdb_open_for_read_only()
+
+db.h:153 - class DB
+db.h:181 - Open() with column families
+db.h:214 - OpenForReadOnly() with column families
+db.h:279 - OpenAsSecondary() with column families
+
+db_impl_secondary.cc:682 - OpenAsSecondary() with column families
+
+db_impl_readonly.cc:259 - OpenForReadOnly() with column families
+
