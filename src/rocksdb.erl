@@ -22,6 +22,7 @@
 -export([
   open/2, open/3,
   open_readonly/2, open_readonly/3,
+  open_secondary/3, open_secondary/4,
   open_optimistic_transaction_db/2, open_optimistic_transaction_db/3,
   open_with_ttl/4,
   close/1,
@@ -39,7 +40,8 @@
   stats/1, stats/2,
   get_property/2, get_property/3,
   get_approximate_sizes/3, get_approximate_sizes/4,
-  get_approximate_memtable_stats/3, get_approximate_memtable_stats/4
+  get_approximate_memtable_stats/3, get_approximate_memtable_stats/4,
+  try_catch_up_with_primary/1
 ]).
 
 -export([open_with_cf/3, open_with_cf_readonly/3]).
@@ -515,6 +517,13 @@ open(_Name, _DBOpts) ->
 open_readonly(_Name, _DBOpts) ->
   ?nif_stub.
 
+-spec open_secondary(Name, Name, DBOpts) -> Result when
+  Name :: file:filename_all(),
+  DBOpts :: options(),
+  Result :: {ok, db_handle()} | {error, any()}.
+open_secondary(_Primary, _Name, _DBOpts) ->
+  ?nif_stub.
+
 %% @doc Open RocksDB with the specified column families
 -spec(open(Name, DBOpts, CFDescriptors) ->
        {ok, db_handle(), list(cf_handle())} | {error, any()}
@@ -531,6 +540,15 @@ open(_Name, _DBOpts, _CFDescriptors) ->
           DBOpts :: db_options(),
           CFDescriptors :: list(cf_descriptor())).
 open_readonly(_Name, _DBOpts, _CFDescriptors) ->
+  ?nif_stub.
+
+-spec open_secondary(Name, Name, DBOpts, CFDescriptors) ->
+      {ok, db_handle(), list(cf_handle())} | {error, any()}
+        when
+          Name :: file:filename_all(),
+          DBOpts :: options(),
+          CFDescriptors :: list(cf_descriptor()).
+open_secondary(_Primary, _Name, _DBOpts, _CFDescriptors) ->
   ?nif_stub.
 
 open_with_cf(Name, DbOpts, CFDescriptors) ->
@@ -842,6 +860,14 @@ get_approximate_memtable_stats(_DBHandle, _StartKey, _LimitKey) ->
   LimitKey :: binary(),
   Res :: {ok, {Count::non_neg_integer(), Size::non_neg_integer()}}.
 get_approximate_memtable_stats(_DBHandle, _CFHandle, _StartKey, _LimitKey) ->
+  ?nif_stub.
+
+%% @doc Attempts to catch a secondary connection up to the current
+%% position of the primary connection.
+-spec try_catch_up_with_primary(DBHandle) -> Res when
+  DBHandle :: db_handle(),
+  Res :: ok | {error, any()}.
+try_catch_up_with_primary(_DBHandle) ->
   ?nif_stub.
 
 %% @doc Removes the database entries in the range ["BeginKey", "EndKey"), i.e.,

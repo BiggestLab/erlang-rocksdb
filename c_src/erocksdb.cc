@@ -33,8 +33,10 @@ static ErlNifFunc nif_funcs[] =
 
         {"open", 2, erocksdb::Open, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"open_readonly", 2, erocksdb::OpenReadOnly, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"open_secondary", 3, erocksdb::OpenSecondary, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"open", 3, erocksdb::OpenWithCf, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"open_readonly", 3, erocksdb::OpenWithCfReadOnly, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"open_secondary", 4, erocksdb::OpenWithCfSecondary, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"open_with_ttl", 4, erocksdb::OpenWithTTL, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"open_optimistic_transaction_db", 3,
          erocksdb::OpenOptimisticTransactionDB, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -50,6 +52,7 @@ static ErlNifFunc nif_funcs[] =
         {"flush", 3, erocksdb::Flush, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"sync_wal", 1, erocksdb::SyncWal, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"set_db_background_threads", 2, erocksdb::SetDBBackgroundThreads, ERL_NIF_REGULAR_BOUND},
+        {"try_catch_up_with_primary", 1, erocksdb::TryCatchUpWithPrimary, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
         {"get_approximate_sizes", 3, erocksdb::GetApproximateSizes, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get_approximate_sizes", 4, erocksdb::GetApproximateSizes, ERL_NIF_DIRTY_JOB_IO_BOUND},
