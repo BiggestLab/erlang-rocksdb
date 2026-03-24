@@ -501,3 +501,57 @@ test_key(Prefix, Suffix) when is_integer(Prefix), is_integer(Suffix) ->
 
 put_key(Db, Prefix, Suffix, Value) ->
   rocksdb:put(Db, test_key(Prefix, Suffix), Value, []).
+
+%% Test concurrent writes and batch reads on the same DB
+%% This reproduces the PersistenceStore pattern where gen_server:cast
+%% fires async writes while a fetch worker does batch reads.
+concurrent_write_batch_read_test() ->
+    rocksdb_test_util:rm_rf("ltest_concurrent"),
+    {ok, Ref} = rocksdb:open("ltest_concurrent", [{create_if_missing, true},
+        {prefix_extractor, {fixed_prefix_transform, 4}}]),
+    try
+        %% Pre-populate with some data
+        lists:foreach(fun(N) ->
+            Key = list_to_binary(io_lib:format("AAAA:~6..0B", [N])),
+            Val = term_to_binary({test, #{<<"n">> => N}, N}),
+            rocksdb:put(Ref, Key, Val, [])
+        end, lists:seq(1, 100)),
+
+        %% Spawn a writer that continuously writes
+        Self = self(),
+        Writer = spawn_link(fun() ->
+            write_loop(Ref, 1000, Self)
+        end),
+
+        %% Meanwhile, do batch reads
+        lists:foreach(fun(_Round) ->
+            {ok, Itr} = rocksdb:iterator(Ref, []),
+            case rocksdb:iterator_move(Itr, first) of
+                {ok, _, _} ->
+                    {ok, Results} = rocksdb:iterator_move_n(Itr, next, 50),
+                    true = length(Results) >= 0;
+                _ -> ok
+            end,
+            rocksdb:iterator_close(Itr)
+        end, lists:seq(1, 20)),
+
+        %% Wait for writer to finish
+        Writer ! stop,
+        receive writer_done -> ok after 5000 -> ok end,
+        ok
+    after
+        rocksdb:close(Ref)
+    end,
+    rocksdb:destroy("ltest_concurrent", []),
+    rocksdb_test_util:rm_rf("ltest_concurrent").
+
+write_loop(Ref, 0, Parent) ->
+    Parent ! writer_done;
+write_loop(Ref, N, Parent) ->
+    receive stop -> Parent ! writer_done
+    after 0 ->
+        Key = list_to_binary(io_lib:format("BBBB:~6..0B", [N])),
+        Val = term_to_binary({test2, #{<<"n">> => N}, N}),
+        rocksdb:put(Ref, Key, Val, []),
+        write_loop(Ref, N - 1, Parent)
+    end.
