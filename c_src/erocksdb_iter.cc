@@ -369,6 +369,11 @@ IteratorMoveN(
 
     for(unsigned int i = 0; i < count; i++)
     {
+        // Check validity BEFORE advancing — calling Next()/Prev()
+        // on an invalid iterator is undefined behavior in RocksDB.
+        if(!itr->Valid())
+            break;
+
         // Advance the iterator
         if(is_next)
             itr->Next();
