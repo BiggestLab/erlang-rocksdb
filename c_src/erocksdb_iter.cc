@@ -360,6 +360,9 @@ IteratorMoveN(
 
     rocksdb::Iterator* itr = itr_ptr->m_Iterator;
 
+    if(NULL == itr)
+        return enif_make_tuple2(env, ATOM_ERROR, ATOM_INVALID_ITERATOR);
+
     // Build result list in reverse, then reverse at the end
     ERL_NIF_TERM result = enif_make_list(env, 0);
     unsigned int collected = 0;
