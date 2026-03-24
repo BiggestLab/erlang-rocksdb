@@ -396,6 +396,103 @@ move_n_large_batch_test() ->
   rocksdb:destroy("ltest", []),
   rocksdb_test_util:rm_rf("ltest").
 
+%% Test: seek then batch_next — mimics PersistenceStore fetch pattern
+move_n_after_seek_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    %% Keys with prefix structure like PersistenceStore: prefix:timestamp
+    rocksdb:put(Ref, <<"AAAA:100">>, <<"v1">>, []),
+    rocksdb:put(Ref, <<"AAAA:200">>, <<"v2">>, []),
+    rocksdb:put(Ref, <<"AAAA:300">>, <<"v3">>, []),
+    rocksdb:put(Ref, <<"AAAA:400">>, <<"v4">>, []),
+    rocksdb:put(Ref, <<"AAAA:500">>, <<"v5">>, []),
+    rocksdb:put(Ref, <<"BBBB:100">>, <<"other1">>, []),
+    rocksdb:put(Ref, <<"BBBB:200">>, <<"other2">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Seek to beginning of prefix
+    ?assertEqual({ok, <<"AAAA:100">>, <<"v1">>}, rocksdb:iterator_move(I, {seek, <<"AAAA:0">>})),
+    %% Batch read next 4 (should get v2-v5, NOT crossing into BBBB)
+    {ok, Results} = rocksdb:iterator_move_n(I, next, 4),
+    ?assertEqual(4, length(Results)),
+    [{K1, _}, {K2, _}, {K3, _}, {K4, _}] = Results,
+    ?assertEqual(<<"AAAA:200">>, K1),
+    ?assertEqual(<<"AAAA:500">>, K4),
+    %% Next batch should cross into BBBB prefix
+    {ok, Results2} = rocksdb:iterator_move_n(I, next, 10),
+    ?assertEqual(2, length(Results2)),
+    [{K5, _}, {K6, _}] = Results2,
+    ?assertEqual(<<"BBBB:100">>, K5),
+    ?assertEqual(<<"BBBB:200">>, K6),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+%% Test: seek_for_prev then batch_prev — mimics PersistenceStore direction=last
+move_n_after_seek_for_prev_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    rocksdb:put(Ref, <<"AAAA:100">>, <<"v1">>, []),
+    rocksdb:put(Ref, <<"AAAA:200">>, <<"v2">>, []),
+    rocksdb:put(Ref, <<"AAAA:300">>, <<"v3">>, []),
+    rocksdb:put(Ref, <<"AAAA:400">>, <<"v4">>, []),
+    rocksdb:put(Ref, <<"AAAA:500">>, <<"v5">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Seek to end of prefix range
+    ?assertEqual({ok, <<"AAAA:500">>, <<"v5">>}, rocksdb:iterator_move(I, {seek_for_prev, <<"AAAA:999">>})),
+    %% Batch read prev 3
+    {ok, Results} = rocksdb:iterator_move_n(I, prev, 3),
+    ?assertEqual(3, length(Results)),
+    [{K1, _}, {K2, _}, {K3, _}] = Results,
+    ?assertEqual(<<"AAAA:400">>, K1),
+    ?assertEqual(<<"AAAA:200">>, K3),
+    %% Continue prev — should get v1 then stop
+    {ok, Results2} = rocksdb:iterator_move_n(I, prev, 10),
+    ?assertEqual(1, length(Results2)),
+    [{K4, _}] = Results2,
+    ?assertEqual(<<"AAAA:100">>, K4),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+%% Test: mixed iterator_move and iterator_move_n calls
+move_n_mixed_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    lists:foreach(fun(N) ->
+        Key = list_to_binary(io_lib:format("k~3..0B", [N])),
+        rocksdb:put(Ref, Key, Key, [])
+    end, lists:seq(1, 20)),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Seek to first
+    {ok, <<"k001">>, _} = rocksdb:iterator_move(I, first),
+    %% Single next
+    {ok, <<"k002">>, _} = rocksdb:iterator_move(I, next),
+    %% Batch next 3
+    {ok, Batch1} = rocksdb:iterator_move_n(I, next, 3),
+    ?assertEqual(3, length(Batch1)),
+    [{<<"k003">>, _}, {<<"k004">>, _}, {<<"k005">>, _}] = Batch1,
+    %% Single next again — should be at k006
+    {ok, <<"k006">>, _} = rocksdb:iterator_move(I, next),
+    %% Batch next 5
+    {ok, Batch2} = rocksdb:iterator_move_n(I, next, 5),
+    ?assertEqual(5, length(Batch2)),
+    [{<<"k007">>, _} | _] = Batch2,
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
 seek_iterator(Itr, Prefix, Suffix) ->
   rocksdb:iterator_move(Itr, test_key(Prefix, Suffix)).
 
