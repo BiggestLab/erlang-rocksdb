@@ -325,6 +325,74 @@ IteratorMove(
 
 }   // erocksdb::IteratorMove
 
+// Batch iterator move: advance N steps in one NIF call.
+// Args: iterator_handle, direction (next|prev), count (integer)
+// Returns: {ok, [{Key, Value}, ...]} — list may be shorter than count if iterator exhausted.
+ERL_NIF_TERM
+IteratorMoveN(
+    ErlNifEnv* env,
+    int /*argc*/,
+    const ERL_NIF_TERM argv[])
+{
+    const ERL_NIF_TERM& itr_handle_ref = argv[0];
+    const ERL_NIF_TERM& direction      = argv[1];
+    const ERL_NIF_TERM& count_term     = argv[2];
+
+    ReferencePtr<ItrObject> itr_ptr;
+    itr_ptr.assign(ItrObject::RetrieveItrObject(env, itr_handle_ref));
+
+    if(NULL == itr_ptr.get())
+        return enif_make_badarg(env);
+
+    // Direction must be next or prev
+    bool is_next;
+    if(ATOM_NEXT == direction)
+        is_next = true;
+    else if(ATOM_PREV == direction)
+        is_next = false;
+    else
+        return enif_make_badarg(env);
+
+    // Count must be a positive integer
+    unsigned int count;
+    if(!enif_get_uint(env, count_term, &count) || count == 0)
+        return enif_make_badarg(env);
+
+    rocksdb::Iterator* itr = itr_ptr->m_Iterator;
+
+    // Build result list in reverse, then reverse at the end
+    ERL_NIF_TERM result = enif_make_list(env, 0);
+    unsigned int collected = 0;
+
+    for(unsigned int i = 0; i < count; i++)
+    {
+        // Advance the iterator
+        if(is_next)
+            itr->Next();
+        else
+            itr->Prev();
+
+        if(!itr->Valid())
+            break;
+
+        rocksdb::Status status = itr->status();
+        if(!status.ok())
+            break;
+
+        ERL_NIF_TERM key = slice_to_binary(env, itr->key());
+        ERL_NIF_TERM val = slice_to_binary(env, itr->value());
+        ERL_NIF_TERM tuple = enif_make_tuple2(env, key, val);
+        result = enif_make_list_cell(env, tuple, result);
+        collected++;
+    }
+
+    // Reverse the list to maintain order
+    ERL_NIF_TERM result_out;
+    enif_make_reverse_list(env, result, &result_out);
+
+    return enif_make_tuple2(env, ATOM_OK, result_out);
+}   // erocksdb::IteratorMoveN
+
 ERL_NIF_TERM
 IteratorRefresh(
     ErlNifEnv* env,

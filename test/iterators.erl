@@ -256,6 +256,146 @@ invalid_test() ->
   rocksdb_test_util:rm_rf("ltest").
 
 
+%% ---- iterator_move_n tests ----
+
+move_n_next_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    rocksdb:put(Ref, <<"a">>, <<"1">>, []),
+    rocksdb:put(Ref, <<"b">>, <<"2">>, []),
+    rocksdb:put(Ref, <<"c">>, <<"3">>, []),
+    rocksdb:put(Ref, <<"d">>, <<"4">>, []),
+    rocksdb:put(Ref, <<"e">>, <<"5">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Position at first entry
+    ?assertEqual({ok, <<"a">>, <<"1">>}, rocksdb:iterator_move(I, first)),
+    %% Batch read next 3
+    {ok, Results} = rocksdb:iterator_move_n(I, next, 3),
+    ?assertEqual([{<<"b">>, <<"2">>}, {<<"c">>, <<"3">>}, {<<"d">>, <<"4">>}], Results),
+    %% Iterator should now be at <<"d">>, so next should be <<"e">>
+    ?assertEqual({ok, <<"e">>, <<"5">>}, rocksdb:iterator_move(I, next)),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+move_n_prev_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    rocksdb:put(Ref, <<"a">>, <<"1">>, []),
+    rocksdb:put(Ref, <<"b">>, <<"2">>, []),
+    rocksdb:put(Ref, <<"c">>, <<"3">>, []),
+    rocksdb:put(Ref, <<"d">>, <<"4">>, []),
+    rocksdb:put(Ref, <<"e">>, <<"5">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Position at last entry
+    ?assertEqual({ok, <<"e">>, <<"5">>}, rocksdb:iterator_move(I, last)),
+    %% Batch read prev 3
+    {ok, Results} = rocksdb:iterator_move_n(I, prev, 3),
+    ?assertEqual([{<<"d">>, <<"4">>}, {<<"c">>, <<"3">>}, {<<"b">>, <<"2">>}], Results),
+    %% Iterator should now be at <<"b">>, so prev should be <<"a">>
+    ?assertEqual({ok, <<"a">>, <<"1">>}, rocksdb:iterator_move(I, prev)),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+move_n_partial_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    rocksdb:put(Ref, <<"a">>, <<"1">>, []),
+    rocksdb:put(Ref, <<"b">>, <<"2">>, []),
+    rocksdb:put(Ref, <<"c">>, <<"3">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Position at first
+    ?assertEqual({ok, <<"a">>, <<"1">>}, rocksdb:iterator_move(I, first)),
+    %% Request 10 but only 2 remain after current position
+    {ok, Results} = rocksdb:iterator_move_n(I, next, 10),
+    ?assertEqual([{<<"b">>, <<"2">>}, {<<"c">>, <<"3">>}], Results),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+move_n_empty_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    rocksdb:put(Ref, <<"a">>, <<"1">>, []),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    %% Position at last (and only) entry
+    ?assertEqual({ok, <<"a">>, <<"1">>}, rocksdb:iterator_move(I, last)),
+    %% No more entries to read forward
+    {ok, Results} = rocksdb:iterator_move_n(I, next, 5),
+    ?assertEqual([], Results),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+move_n_cf_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref, [DefaultH]} = rocksdb:open_with_cf("ltest", [{create_if_missing, true}], [{"default", []}]),
+  {ok, TestH} = rocksdb:create_column_family(Ref, "test", []),
+  try
+    rocksdb:put(Ref, TestH, <<"a">>, <<"x1">>, []),
+    rocksdb:put(Ref, TestH, <<"b">>, <<"x2">>, []),
+    rocksdb:put(Ref, TestH, <<"c">>, <<"x3">>, []),
+    rocksdb:put(Ref, TestH, <<"d">>, <<"x4">>, []),
+    %% Also put in default CF to make sure we don't cross CFs
+    rocksdb:put(Ref, DefaultH, <<"a">>, <<"y1">>, []),
+    {ok, TestIt} = rocksdb:iterator(Ref, TestH, []),
+    ?assertEqual({ok, <<"a">>, <<"x1">>}, rocksdb:iterator_move(TestIt, first)),
+    {ok, Results} = rocksdb:iterator_move_n(TestIt, next, 10),
+    ?assertEqual([{<<"b">>, <<"x2">>}, {<<"c">>, <<"x3">>}, {<<"d">>, <<"x4">>}], Results),
+    ok = rocksdb:iterator_close(TestIt)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
+move_n_large_batch_test() ->
+  rocksdb_test_util:rm_rf("ltest"),
+  {ok, Ref} = rocksdb:open("ltest", [{create_if_missing, true}]),
+  try
+    %% Write 1000 entries
+    lists:foreach(fun(N) ->
+        Key = list_to_binary(io_lib:format("key_~5..0B", [N])),
+        Val = list_to_binary(io_lib:format("val_~5..0B", [N])),
+        rocksdb:put(Ref, Key, Val, [])
+    end, lists:seq(1, 1000)),
+    {ok, I} = rocksdb:iterator(Ref, []),
+    ?assertEqual({ok, <<"key_00001">>, <<"val_00001">>}, rocksdb:iterator_move(I, first)),
+    %% Batch read 500
+    {ok, Results} = rocksdb:iterator_move_n(I, next, 500),
+    ?assertEqual(500, length(Results)),
+    %% First result should be key_00002
+    [{FirstKey, _} | _] = Results,
+    ?assertEqual(<<"key_00002">>, FirstKey),
+    %% Last result should be key_00501
+    {LastKey, _} = lists:last(Results),
+    ?assertEqual(<<"key_00501">>, LastKey),
+    %% Iterator should be positioned at key_00501, next should be key_00502
+    ?assertEqual({ok, <<"key_00502">>, <<"val_00502">>}, rocksdb:iterator_move(I, next)),
+    ok = rocksdb:iterator_close(I)
+  after
+    rocksdb:close(Ref)
+  end,
+  rocksdb:destroy("ltest", []),
+  rocksdb_test_util:rm_rf("ltest").
+
 seek_iterator(Itr, Prefix, Suffix) ->
   rocksdb:iterator_move(Itr, test_key(Prefix, Suffix)).
 

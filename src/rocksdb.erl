@@ -69,6 +69,7 @@
   iterator/2, iterator/3,
   iterators/3,
   iterator_move/2,
+  iterator_move_n/3,
   iterator_refresh/1,
   iterator_close/1
 ]).
@@ -992,6 +993,18 @@ iterators(_DBHandle, _CFHandle, _ReadOpts) ->
                                            ITRAction::iterator_action()).
 iterator_move(_ITRHandle, _ITRAction) ->
   ?nif_stub.
+
+%% @doc
+%% Batch iterator move: advance N steps in one NIF call.
+%% Direction is `next' or `prev'. Returns up to N key-value pairs.
+%% The iterator must already be positioned (via iterator_move with seek/first/last).
+-spec iterator_move_n(ITRHandle, Direction, Count) ->
+    {ok, [{Key::binary(), Value::binary()}]} when
+        ITRHandle :: itr_handle(),
+        Direction :: next | prev,
+        Count :: pos_integer().
+iterator_move_n(_ITRHandle, _Direction, _Count) ->
+    ?nif_stub.
 
 %% @doc
 %% Refresh iterator
