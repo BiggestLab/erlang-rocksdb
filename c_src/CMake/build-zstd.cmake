@@ -1,0 +1,33 @@
+add_dependencies (${ErlangRocksDBNIF_TARGET} zstd_static)
+include(ExternalProject)
+include(GNUInstallDirs)
+
+set(ZSTD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../deps/zstd/build/cmake")
+set(ZSTD_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/zstd")
+set(ZSTD_INCLUDE_DIR "${ZSTD_ROOT_DIR}/include")
+set(ZSTD_STATIC_LIB "${ZSTD_ROOT_DIR}/${CMAKE_INSTALL_LIBDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}zstd${CMAKE_STATIC_LIBRARY_SUFFIX}")
+set(ZSTD_LIBRARY ${ZSTD_STATIC_LIB})
+
+ExternalProject_Add(zstd_static
+    SOURCE_DIR "${ZSTD_SOURCE_DIR}"
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=${ZSTD_ROOT_DIR}
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DZSTD_BUILD_SHARED=OFF
+        -DZSTD_BUILD_STATIC=ON
+        -DZSTD_BUILD_PROGRAMS=OFF
+        -DZSTD_BUILD_TESTS=OFF
+    BINARY_DIR ${ZSTD_ROOT_DIR}
+    BUILD_BYPRODUCTS "${ZSTD_STATIC_LIB}"
+    )
+
+set(ZSTD_FOUND TRUE)
+
+message(STATUS "ZSTD library: ${ZSTD_LIBRARY}")
+message(STATUS "ZSTD includes: ${ZSTD_INCLUDE_DIR}")
+
+mark_as_advanced(
+    ZSTD_ROOT_DIR
+    ZSTD_LIBRARY
+    ZSTD_INCLUDE_DIR
+)

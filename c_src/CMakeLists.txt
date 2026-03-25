@@ -132,6 +132,12 @@ if(WITH_SNAPPY)
     find_package(Snappy REQUIRED)
 endif()
 
+option(WITH_BUNDLE_ZSTD "Use bundle zstd" OFF)
+
+if(WITH_BUNDLE_ZSTD AND NOT WITH_ZSTD)
+    include(build-zstd)
+endif()
+
 if(WITH_ZSTD)
   find_package(Zstd REQUIRED)
 endif()
