@@ -113,6 +113,10 @@ class Status {
     kOverwritten = 12,
     kTxnNotPrepared = 13,
     kIOFenced = 14,
+    kMergeOperatorFailed = 15,
+    kMergeOperandThresholdExceeded = 16,
+    kPrefetchLimitReached = 17,
+    kNotExpectedCodePath = 18,
     kMaxSubCode
   };
 
@@ -135,6 +139,9 @@ class Status {
   Status(Code _code, SubCode _subcode, Severity _sev, const Slice& msg)
       : Status(_code, _subcode, msg, "", _sev) {}
 
+  static Status CopyAppendMessage(const Status& s, const Slice& delim,
+                                  const Slice& msg);
+
   Severity severity() const {
     MarkChecked();
     return sev_;
@@ -146,6 +153,25 @@ class Status {
     return state_.get();
   }
 
+  // Override this status with another, unless this status is already non-ok.
+  // Returns *this. Thus, the result of `a.UpdateIfOk(b).UpdateIfOk(c)` is
+  // non-ok (and `a` modified as such) iff any input was non-ok, with
+  // left-most taking precedence as far as the details.
+  Status& UpdateIfOk(Status&& s) {
+    if (code() == kOk) {
+      *this = std::move(s);
+    } else {
+      // Alright to ignore that status as long as this one is checked
+      s.PermitUncheckedError();
+    }
+    MustCheck();
+    return *this;
+  }
+
+  Status& UpdateIfOk(const Status& s) {
+    return UpdateIfOk(std::forward<Status>(Status(s)));
+  }
+
   // Return a success status.
   static Status OK() { return Status(); }
 
@@ -154,6 +180,14 @@ class Status {
   // but it can be useful for communicating statistical information without
   // changing public APIs.
   static Status OkOverwritten() { return Status(kOk, kOverwritten); }
+
+  // Successful, though the number of operands merged during the query exceeded
+  // the threshold. Note: using variants of OK status for program logic is
+  // discouraged, but it can be useful for communicating statistical information
+  // without changing public APIs.
+  static Status OkMergeOperandThresholdExceeded() {
+    return Status(kOk, kMergeOperandThresholdExceeded);
+  }
 
   // Return error status of an appropriate type.
   static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
@@ -284,17 +318,33 @@ class Status {
     return Status(kInvalidArgument, kTxnNotPrepared, msg, msg2);
   }
 
+  static Status LockLimit() { return Status(kAborted, kLockLimit); }
+
+  static Status PrefetchLimitReached() {
+    return Status(kIncomplete, kPrefetchLimitReached);
+  }
+
   // Returns true iff the status indicates success.
   bool ok() const {
     MarkChecked();
     return code() == kOk;
   }
 
+  // Assert the status is OK in debug mode
+  void AssertOK() const { assert(ok()); }
+
   // Returns true iff the status indicates success *with* something
   // overwritten
   bool IsOkOverwritten() const {
     MarkChecked();
     return code() == kOk && subcode() == kOverwritten;
+  }
+
+  // Returns true iff the status indicates success *with* the number of operands
+  // merged exceeding the threshold
+  bool IsOkMergeOperandThresholdExceeded() const {
+    MarkChecked();
+    return code() == kOk && subcode() == kMergeOperandThresholdExceeded;
   }
 
   // Returns true iff the status indicates a NotFound error.
@@ -443,6 +493,13 @@ class Status {
   bool IsIOFenced() const {
     MarkChecked();
     return (code() == kIOError) && (subcode() == kIOFenced);
+  }
+
+  // Returns true iff the status indicates prefetch limit reached during
+  // MultiScan.
+  bool IsPrefetchLimitReached() const {
+    MarkChecked();
+    return (code() == kIncomplete) && (subcode() == kPrefetchLimitReached);
   }
 
   // Return a string representation of this status suitable for printing.

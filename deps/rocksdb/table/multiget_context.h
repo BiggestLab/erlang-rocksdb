@@ -12,6 +12,7 @@
 #include "db/lookup_key.h"
 #include "db/merge_context.h"
 #include "rocksdb/env.h"
+#include "rocksdb/options.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/types.h"
 #include "util/async_file_reader.h"
@@ -21,6 +22,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 class GetContext;
+class PinnableWideColumns;
 
 struct KeyContext {
   const Slice* key;
@@ -36,11 +38,13 @@ struct KeyContext {
   bool is_blob_index;
   void* cb_arg;
   PinnableSlice* value;
+  PinnableWideColumns* columns;
   std::string* timestamp;
   GetContext* get_context;
 
   KeyContext(ColumnFamilyHandle* col_family, const Slice& user_key,
-             PinnableSlice* val, std::string* ts, Status* stat)
+             PinnableSlice* val, PinnableWideColumns* cols, std::string* ts,
+             Status* stat)
       : key(&user_key),
         lkey(nullptr),
         column_family(col_family),
@@ -50,10 +54,9 @@ struct KeyContext {
         is_blob_index(false),
         cb_arg(nullptr),
         value(val),
+        columns(cols),
         timestamp(ts),
         get_context(nullptr) {}
-
-  KeyContext() = default;
 };
 
 // The MultiGetContext class is a container for the sorted list of keys that
@@ -123,11 +126,12 @@ class MultiGetContext {
     assert(num_keys <= MAX_BATCH_SIZE);
     if (num_keys > MAX_LOOKUP_KEYS_ON_STACK) {
       lookup_key_heap_buf.reset(new char[sizeof(LookupKey) * num_keys]);
-      lookup_key_ptr_ = reinterpret_cast<LookupKey*>(
-          lookup_key_heap_buf.get());
+      lookup_key_ptr_ = reinterpret_cast<LookupKey*>(lookup_key_heap_buf.get());
     }
 
-    for (size_t iter = 0; iter != num_keys_; ++iter) {
+    for (size_t iter = 0;
+         iter < num_keys_ && /* suppress a warning */ iter < MAX_BATCH_SIZE;
+         ++iter) {
       // autovector may not be contiguous storage, so make a copy
       sorted_keys_[iter] = (*sorted_keys)[begin + iter];
       sorted_keys_[iter]->lkey = new (&lookup_key_ptr_[iter])
@@ -157,8 +161,9 @@ class MultiGetContext {
 
  private:
   static const int MAX_LOOKUP_KEYS_ON_STACK = 16;
-  alignas(alignof(LookupKey))
-    char lookup_key_stack_buf[sizeof(LookupKey) * MAX_LOOKUP_KEYS_ON_STACK];
+  alignas(
+      alignof(LookupKey)) char lookup_key_stack_buf[sizeof(LookupKey) *
+                                                    MAX_LOOKUP_KEYS_ON_STACK];
   std::array<KeyContext*, MAX_BATCH_SIZE> sorted_keys_;
   size_t num_keys_;
   Mask value_mask_;
@@ -216,8 +221,9 @@ class MultiGetContext {
         while (++index_ < range_->end_ &&
                (Mask{1} << index_) &
                    (range_->ctx_->value_mask_ | range_->skip_mask_ |
-                    range_->invalid_mask_))
-          ;
+                    range_->invalid_mask_)) {
+          // empty loop body
+        }
         return *this;
       }
 
@@ -250,8 +256,7 @@ class MultiGetContext {
       size_t index_;
     };
 
-    Range(const Range& mget_range,
-          const Iterator& first,
+    Range(const Range& mget_range, const Iterator& first,
           const Iterator& last) {
       ctx_ = mget_range.ctx_;
       if (first == last) {

@@ -116,7 +116,7 @@ public class TransactionTest extends AbstractTransactionTest {
         txn.commit();
       }
 
-      Transaction txnPrepare;
+      final Transaction txnPrepare;
       txnPrepare = dbContainer.beginTransaction();
       txnPrepare.setName("txnPrepare1");
       txnPrepare.put(k1, v12);
@@ -147,7 +147,7 @@ public class TransactionTest extends AbstractTransactionTest {
         txn.commit();
       }
 
-      Transaction txnPrepare;
+      final Transaction txnPrepare;
       txnPrepare = dbContainer.beginTransaction();
       txnPrepare.setName("txnPrepare1");
       txnPrepare.put(k1, v12);
@@ -346,6 +346,32 @@ public class TransactionTest extends AbstractTransactionTest {
   }
 
   @Test
+  public void multiGetAsList() throws RocksDBException {
+    final byte[] k1 = "k1".getBytes(UTF_8);
+    final byte[] k2 = "k2".getBytes(UTF_8);
+    final byte[] k3 = "k3".getBytes(UTF_8);
+    final byte[] v1 = "v1".getBytes(UTF_8);
+    final byte[] v2 = "v2".getBytes(UTF_8);
+
+    try (final DBContainer dbContainer = startDb();
+         final ReadOptions readOptions = new ReadOptions()) {
+      final ColumnFamilyHandle testCf = dbContainer.getTestColumnFamily();
+
+      try (final Transaction txn = dbContainer.beginTransaction()) {
+        txn.put(testCf, k1, v1);
+        txn.put(testCf, k2, v2);
+        txn.commit();
+      }
+
+      try (final Transaction txn = dbContainer.beginTransaction()) {
+        final List<byte[]> result =
+            txn.multiGetAsList(readOptions, testCf, Arrays.asList(k1, k2, k3));
+        assertThat(result).containsExactly(v1, v2, null);
+      }
+    }
+  }
+
+  @Test
   public void name() throws RocksDBException {
     try(final DBContainer dbContainer = startDb();
         final Transaction txn = dbContainer.beginTransaction()) {
@@ -416,12 +442,13 @@ public class TransactionTest extends AbstractTransactionTest {
         .setCreateIfMissing(true)
         .setCreateMissingColumnFamilies(true);
     final TransactionDBOptions txnDbOptions = new TransactionDBOptions();
+    final ColumnFamilyOptions defaultColumnFamilyOptions = new ColumnFamilyOptions();
+    defaultColumnFamilyOptions.setMergeOperator(new StringAppendOperator("++"));
     final ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions();
-    final List<ColumnFamilyDescriptor> columnFamilyDescriptors =
-        Arrays.asList(
-            new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY),
-            new ColumnFamilyDescriptor(TXN_TEST_COLUMN_FAMILY,
-                columnFamilyOptions));
+    columnFamilyOptions.setMergeOperator(new StringAppendOperator("**"));
+    final List<ColumnFamilyDescriptor> columnFamilyDescriptors = Arrays.asList(
+        new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, defaultColumnFamilyOptions),
+        new ColumnFamilyDescriptor(TXN_TEST_COLUMN_FAMILY, columnFamilyOptions));
     final List<ColumnFamilyHandle> columnFamilyHandles = new ArrayList<>();
 
     final TransactionDB txnDb;

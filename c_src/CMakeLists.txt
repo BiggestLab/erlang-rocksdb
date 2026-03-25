@@ -180,7 +180,7 @@ include_directories(${ROCKSDB_INCLUDE_DIRS})
 
 #--------------------------------------------------------------------------------
 
-set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD 17)
+set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD 20)
 set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_EXTENSIONS OFF)
 
@@ -251,18 +251,35 @@ if(APPLE)
 	set(TARGET_LINKER_OPTIONS "-flat_namespace -undefined suppress")
 endif(APPLE)
 
-target_link_libraries(
-    ${ErlangRocksDBNIF_TARGET}
-    PRIVATE
-    ${TARGET_LINKER_OPTIONS}
-    ${ROCKSDB_LIBRARIES}
-    ${ZSTD_LIBRARY}
-    ${LZ4_LIBRARY}
-    ${SNAPPY_LIBRARY}
-    ${BZIP2_LIBRARIES}
-    ${ZLIB_LIBRARY}
-    ${TBB_LIBRARIES}
-)
+if(NOT MSVC)
+    target_link_libraries(
+        ${ErlangRocksDBNIF_TARGET}
+        PRIVATE
+        ${TARGET_LINKER_OPTIONS}
+        -Wl,--whole-archive
+        ${ROCKSDB_LIBRARIES}
+        ${SNAPPY_LIBRARY}
+        ${LZ4_LIBRARY}
+        ${ZSTD_LIBRARY}
+        -Wl,--no-whole-archive
+        ${BZIP2_LIBRARIES}
+        ${ZLIB_LIBRARY}
+        ${TBB_LIBRARIES}
+    )
+else()
+    target_link_libraries(
+        ${ErlangRocksDBNIF_TARGET}
+        PRIVATE
+        ${TARGET_LINKER_OPTIONS}
+        ${ROCKSDB_LIBRARIES}
+        ${ZSTD_LIBRARY}
+        ${LZ4_LIBRARY}
+        ${SNAPPY_LIBRARY}
+        ${BZIP2_LIBRARIES}
+        ${ZLIB_LIBRARY}
+        ${TBB_LIBRARIES}
+    )
+endif()
 
 if(MSVC)
 	target_link_libraries(

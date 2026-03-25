@@ -58,7 +58,7 @@ public class SstFileReaderTest {
         {"direct", ByteBufferAllocator.DIRECT}, {"indirect", ByteBufferAllocator.HEAP}});
   }
 
-  @Parameterized.Parameter(0) public String name;
+  @Parameterized.Parameter() public String name;
 
   @Parameterized.Parameter(1) public ByteBufferAllocator byteBufferAllocator;
 
@@ -217,6 +217,8 @@ public class SstFileReaderTest {
       assertThat(iterator.isValid()).isTrue();
       assertThat(iterator.key()).isEqualTo("key1".getBytes());
       assertThat(iterator.value()).isEqualTo("value1".getBytes());
+
+      iterator.close();
     }
   }
 }

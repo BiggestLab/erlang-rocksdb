@@ -85,7 +85,9 @@ class SyncPoint {
   };
 
   // call once at the beginning of a test to setup the dependency between
-  // sync points
+  // sync points. Specifically, execution will not be allowed to proceed past
+  // each successor until execution has reached the corresponding predecessor,
+  // in any thread.
   void LoadDependency(const std::vector<SyncPointPair>& dependencies);
 
   // call once at the beginning of a test to setup the dependency between
@@ -138,9 +140,9 @@ class SyncPoint {
   struct Data;
 
  private:
-   // Singleton
+  // Singleton
   SyncPoint();
-  Data*  impl_;
+  Data* impl_;
 };
 
 // Sets up sync points to mock direct IO instead of actually issuing direct IO
@@ -178,3 +180,35 @@ void SetupSyncPointsToMockDirectIO();
     }                                               \
   }
 #endif  // NDEBUG
+
+// An alternative to assert() that is more test-friendly than using
+// ASSERT_DEATH. Relies on exception propagation.
+#ifdef NDEBUG
+#define testable_assert(cond)
+#else
+namespace ROCKSDB_NAMESPACE {
+// Intentionally not based on std::exception to reduce places where this
+// would be caught
+struct TestableAssertionFailure {};
+extern std::atomic<int> g_throw_on_testable_assertion_failure;
+}  // namespace ROCKSDB_NAMESPACE
+#define testable_assert(cond)                                          \
+  do {                                                                 \
+    if (ROCKSDB_NAMESPACE::g_throw_on_testable_assertion_failure.load( \
+            std::memory_order_relaxed) > 0) {                          \
+      if (cond) {                                                      \
+      } else                                                           \
+        throw ROCKSDB_NAMESPACE::TestableAssertionFailure();           \
+    } else {                                                           \
+      assert(cond);                                                    \
+    }                                                                  \
+  } while (0)
+#define ASSERT_TESTABLE_FAILURE(expr)                                   \
+  do {                                                                  \
+    ROCKSDB_NAMESPACE::g_throw_on_testable_assertion_failure.fetch_add( \
+        1, std::memory_order_relaxed);                                  \
+    ASSERT_THROW(expr, ROCKSDB_NAMESPACE::TestableAssertionFailure);    \
+    ROCKSDB_NAMESPACE::g_throw_on_testable_assertion_failure.fetch_sub( \
+        1, std::memory_order_relaxed);                                  \
+  } while (0)
+#endif
