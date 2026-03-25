@@ -424,11 +424,13 @@
                           {single_delete, ColumnFamilyHandle::cf_handle(), Key::binary()} |
                           clear].
 
+-type bottommost_level_compaction() :: skip | if_have_compaction_filter | force | force_optimized.
 -type compact_range_options()  :: [{exclusive_manual_compaction, boolean()} |
                                    {change_level, boolean()} |
                                    {target_level, integer()} |
                                    {allow_write_stall, boolean()} |
-                                   {max_subcompactions, non_neg_integer()}].
+                                   {max_subcompactions, non_neg_integer()} |
+                                   {bottommost_level_compaction, bottommost_level_compaction()}].
 
 -type flush_options() :: [{wait, boolean()} |
                           {allow_write_stall, boolean()}].

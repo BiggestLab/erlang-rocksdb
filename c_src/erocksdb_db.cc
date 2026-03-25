@@ -970,6 +970,17 @@ ERL_NIF_TERM parse_compact_range_option(ErlNifEnv *env, ERL_NIF_TERM item, rocks
             if (enif_get_uint(env, option[1], &max_subcompactions))
                 opts.max_subcompactions = max_subcompactions;
         }
+        else if (option[0] == erocksdb::ATOM_BOTTOMMOST_LEVEL_COMPACTION)
+        {
+            if (option[1] == erocksdb::ATOM_BLC_SKIP)
+                opts.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kSkip;
+            else if (option[1] == erocksdb::ATOM_BLC_IF_HAVE_COMPACTION_FILTER)
+                opts.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kIfHaveCompactionFilter;
+            else if (option[1] == erocksdb::ATOM_BLC_FORCE)
+                opts.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
+            else if (option[1] == erocksdb::ATOM_BLC_FORCE_OPTIMIZED)
+                opts.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForceOptimized;
+        }
     }
 
     return erocksdb::ATOM_OK;
