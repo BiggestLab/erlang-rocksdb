@@ -42,6 +42,11 @@ if(WITH_BUNDLE_LZ4)
     list(APPEND rocksdb_CMAKE_ARGS -Dlz4_ROOT_DIR=${LZ4_ROOT_DIR})
 endif()
 
+if(WITH_BUNDLE_ZSTD)
+    list(APPEND rocksdb_CMAKE_ARGS -Dzstd_ROOT_DIR=${ZSTD_ROOT_DIR})
+    list(APPEND rocksdb_CMAKE_ARGS -DCMAKE_PREFIX_PATH=${ZSTD_ROOT_DIR})
+endif()
+
 message(STATUS "cmake args ${rocksdb_CMAKE_ARGS}")
 
 include(ExternalProject)
@@ -69,6 +74,10 @@ endif()
 
 if(WITH_BUNDLE_LZ4)
     ExternalProject_Add_StepDependencies(rocksdb build lz4)
+endif()
+
+if(WITH_BUNDLE_ZSTD)
+    ExternalProject_Add_StepDependencies(rocksdb build zstd_static)
 endif()
 
 if(MSVC)
