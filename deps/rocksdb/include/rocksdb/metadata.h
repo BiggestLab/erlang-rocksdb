@@ -82,7 +82,7 @@ struct SstFileMetaData : public FileStorageInfo {
                   bool _being_compacted, Temperature _temperature,
                   uint64_t _oldest_blob_file_number,
                   uint64_t _oldest_ancester_time, uint64_t _file_creation_time,
-                  std::string& _file_checksum,
+                  uint64_t _epoch_number, std::string& _file_checksum,
                   std::string& _file_checksum_func_name)
       : smallest_seqno(_smallest_seqno),
         largest_seqno(_largest_seqno),
@@ -94,7 +94,8 @@ struct SstFileMetaData : public FileStorageInfo {
         num_deletions(0),
         oldest_blob_file_number(_oldest_blob_file_number),
         oldest_ancester_time(_oldest_ancester_time),
-        file_creation_time(_file_creation_time) {
+        file_creation_time(_file_creation_time),
+        epoch_number(_epoch_number) {
     if (!_file_name.empty()) {
       if (_file_name[0] == '/') {
         relative_filename = _file_name.substr(1);
@@ -141,6 +142,18 @@ struct SstFileMetaData : public FileStorageInfo {
   // Timestamp when the SST file is created, provided by
   // SystemClock::GetCurrentTime(). 0 if the information is not available.
   uint64_t file_creation_time = 0;
+  // The order of a file being flushed or ingested/imported.
+  // Compaction output file will be assigned with the minimum `epoch_number`
+  // among input files'.
+  // For L0, larger `epoch_number` indicates newer L0 file.
+  // 0 if the information is not available.
+  uint64_t epoch_number = 0;
+
+  // These bounds define the effective key range for range tombstones
+  // in this file.
+  // Currently only used by CreateColumnFamilyWithImport().
+  std::string smallest{};  // Smallest internal key served by table
+  std::string largest{};   // Largest internal key served by table
 
   // DEPRECATED: The name of the file within its directory with a
   // leading slash (e.g. "/123456.sst"). Use relative_filename from base struct
@@ -211,6 +224,20 @@ struct LevelMetaData {
   const std::vector<SstFileMetaData> files;
 };
 
+// Options for filtering column family metadata by key range.
+struct GetColumnFamilyMetaDataOptions {
+  RangeOpt range;
+
+  // The level to filter on. If -1, all levels are included.
+  int level = -1;
+
+  GetColumnFamilyMetaDataOptions() = default;
+
+  GetColumnFamilyMetaDataOptions(const OptSlice& _start_key,
+                                 const OptSlice& _end_key, int _level = -1)
+      : range(_start_key, _end_key), level(_level) {}
+};
+
 // The metadata that describes a column family.
 struct ColumnFamilyMetaData {
   ColumnFamilyMetaData() : size(0), file_count(0), name("") {}
@@ -226,6 +253,9 @@ struct ColumnFamilyMetaData {
   // The name of the column family.
   std::string name;
   // The metadata of all levels in this column family.
+  // levels[i] contains files in level i.
+  // For level 0, files with recent updates are ordered first.
+  // For level 1+, files are ordered by increasing key range.
   std::vector<LevelMetaData> levels;
 
   // The total size of all blob files

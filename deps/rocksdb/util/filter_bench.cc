@@ -3,10 +3,10 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-#if !defined(GFLAGS) || defined(ROCKSDB_LITE)
+#if !defined(GFLAGS)
 #include <cstdio>
 int main() {
-  fprintf(stderr, "filter_bench requires gflags and !ROCKSDB_LITE\n");
+  fprintf(stderr, "filter_bench requires gflags\n");
   return 1;
 }
 #else
@@ -145,7 +145,6 @@ using ROCKSDB_NAMESPACE::BlockContents;
 using ROCKSDB_NAMESPACE::BloomFilterPolicy;
 using ROCKSDB_NAMESPACE::BloomHash;
 using ROCKSDB_NAMESPACE::BloomLikeFilterPolicy;
-using ROCKSDB_NAMESPACE::BuiltinFilterBitsBuilder;
 using ROCKSDB_NAMESPACE::CachableEntry;
 using ROCKSDB_NAMESPACE::Cache;
 using ROCKSDB_NAMESPACE::CacheEntryRole;
@@ -153,6 +152,7 @@ using ROCKSDB_NAMESPACE::CacheEntryRoleOptions;
 using ROCKSDB_NAMESPACE::EncodeFixed32;
 using ROCKSDB_NAMESPACE::Env;
 using ROCKSDB_NAMESPACE::FastRange32;
+using ROCKSDB_NAMESPACE::FilterBitsBuilder;
 using ROCKSDB_NAMESPACE::FilterBitsReader;
 using ROCKSDB_NAMESPACE::FilterBuildingContext;
 using ROCKSDB_NAMESPACE::FilterPolicy;
@@ -195,7 +195,7 @@ struct KeyMaker {
       len += FastRange32(
           (val_num >> FLAGS_vary_key_size_log2_interval) * 1234567891, 5);
     }
-    char * data = buf_.get() + start;
+    char *data = buf_.get() + start;
     // Populate key data such that all data makes it into a key of at
     // least 8 bytes. We also don't want all the within-filter key
     // variance confined to a contiguous 32 bits, because then a 32 bit
@@ -378,9 +378,9 @@ void FilterBench::Go() {
                                     FLAGS_average_keys_per_filter);
   const uint32_t variance_offset = variance_range / 2;
 
-  const std::vector<TestMode> &testModes =
-      FLAGS_best_case ? bestCaseTestModes
-                      : FLAGS_quick ? quickTestModes : allTestModes;
+  const std::vector<TestMode> &testModes = FLAGS_best_case ? bestCaseTestModes
+                                           : FLAGS_quick   ? quickTestModes
+                                                           : allTestModes;
 
   m_queries_ = FLAGS_m_queries;
   double working_mem_size_mb = FLAGS_working_mem_size_mb;
@@ -393,7 +393,7 @@ void FilterBench::Go() {
 
   std::cout << "Building..." << std::endl;
 
-  std::unique_ptr<BuiltinFilterBitsBuilder> builder;
+  std::unique_ptr<FilterBitsBuilder> builder;
 
   size_t total_memory_used = 0;
   size_t total_size = 0;
@@ -440,8 +440,7 @@ void FilterBench::Go() {
       info.filter_ = info.plain_table_bloom_->GetRawData();
     } else {
       if (!builder) {
-        builder.reset(
-            static_cast_with_check<BuiltinFilterBitsBuilder>(GetBuilder()));
+        builder.reset(GetBuilder());
       }
       for (uint32_t i = 0; i < keys_to_add; ++i) {
         builder->AddKey(kms_[0].Get(filter_id, i));
@@ -726,9 +725,9 @@ double FilterBench::RandomQueryTest(uint32_t inside_threshold, bool dry_run,
           } else {
             may_match = info.full_block_reader_->KeyMayMatch(
                 batch_slices[i],
-                /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                /*const_ikey_ptr=*/nullptr,
                 /*get_context=*/nullptr,
-                /*lookup_context=*/nullptr, Env::IO_TOTAL);
+                /*lookup_context=*/nullptr, ROCKSDB_NAMESPACE::ReadOptions());
           }
         } else {
           if (dry_run) {
@@ -837,4 +836,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif  // !defined(GFLAGS) || defined(ROCKSDB_LITE)
+#endif  // !defined(GFLAGS)

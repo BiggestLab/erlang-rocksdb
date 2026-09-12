@@ -96,19 +96,10 @@ std::string GetTestNameSuffix(
   return oss.str();
 }
 
-#ifndef ROCKSDB_LITE
 INSTANTIATE_TEST_CASE_P(DBRateLimiterOnReadTest, DBRateLimiterOnReadTest,
                         ::testing::Combine(::testing::Bool(), ::testing::Bool(),
                                            ::testing::Bool()),
                         GetTestNameSuffix);
-#else   // ROCKSDB_LITE
-// Cannot use direct I/O in lite mode.
-INSTANTIATE_TEST_CASE_P(DBRateLimiterOnReadTest, DBRateLimiterOnReadTest,
-                        ::testing::Combine(::testing::Values(false),
-                                           ::testing::Bool(),
-                                           ::testing::Bool()),
-                        GetTestNameSuffix);
-#endif  // ROCKSDB_LITE
 
 TEST_P(DBRateLimiterOnReadTest, Get) {
   if (use_direct_io_ && !IsDirectIOSupported()) {
@@ -229,12 +220,11 @@ TEST_P(DBRateLimiterOnReadTest, Iterator) {
       ++expected;
     }
   }
+  ASSERT_OK(iter->status());
   // Reverse scan does not read evenly (one block per iteration) due to
   // descending seqno ordering, so wait until after the loop to check total.
   ASSERT_EQ(expected, options_.rate_limiter->GetTotalRequests(Env::IO_USER));
 }
-
-#if !defined(ROCKSDB_LITE)
 
 TEST_P(DBRateLimiterOnReadTest, VerifyChecksum) {
   if (use_direct_io_ && !IsDirectIOSupported()) {
@@ -245,8 +235,24 @@ TEST_P(DBRateLimiterOnReadTest, VerifyChecksum) {
   ASSERT_EQ(0, options_.rate_limiter->GetTotalRequests(Env::IO_USER));
 
   ASSERT_OK(db_->VerifyChecksum(GetReadOptions()));
-  // The files are tiny so there should have just been one read per file.
-  int expected = kNumFiles;
+  // In BufferedIO,
+  // there are 7 reads per file, each of which will be rate-limited.
+  // During open:  read footer, meta index block, properties block, index block.
+  // During actual checksum verification: read meta index block, verify checksum
+  // in meta blocks and verify checksum in file blocks.
+  //
+  // In DirectIO, where we support tail prefetching, during table open, we only
+  // do 1 read instead of 4 as described above. Actual checksum verification
+  // reads stay the same.
+#ifdef OS_WIN
+  // No file system prefetch implemented for OS Win. During table open,
+  // we only do 1 read for BufferedIO.
+  int num_read_per_file = 4;
+#else
+  int num_read_per_file = (!use_direct_io_) ? 7 : 4;
+#endif
+  int expected = kNumFiles * num_read_per_file;
+
   ASSERT_EQ(expected, options_.rate_limiter->GetTotalRequests(Env::IO_USER));
 }
 
@@ -263,8 +269,6 @@ TEST_P(DBRateLimiterOnReadTest, VerifyFileChecksums) {
   int expected = kNumFiles;
   ASSERT_EQ(expected, options_.rate_limiter->GetTotalRequests(Env::IO_USER));
 }
-
-#endif  // !defined(ROCKSDB_LITE)
 
 class DBRateLimiterOnWriteTest : public DBTestBase {
  public:
@@ -319,10 +323,8 @@ TEST_F(DBRateLimiterOnWriteTest, Compact) {
 
   // Pre-comaction:
   // level-0 : `kNumFiles` SST files overlapping on [kStartKey, kEndKey]
-#ifndef ROCKSDB_LITE
   std::string files_per_level_pre_compaction = std::to_string(kNumFiles);
   ASSERT_EQ(files_per_level_pre_compaction, FilesPerLevel(0 /* cf */));
-#endif  // !ROCKSDB_LITE
 
   std::int64_t prev_total_request =
       options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL);
@@ -337,10 +339,8 @@ TEST_F(DBRateLimiterOnWriteTest, Compact) {
   // Post-comaction:
   // level-0 : 0 SST file
   // level-1 : 1 SST file
-#ifndef ROCKSDB_LITE
   std::string files_per_level_post_compaction = "0,1";
   ASSERT_EQ(files_per_level_post_compaction, FilesPerLevel(0 /* cf */));
-#endif  // !ROCKSDB_LITE
 
   std::int64_t exepcted_compaction_request = 1;
   EXPECT_EQ(actual_compaction_request, exepcted_compaction_request);
@@ -442,6 +442,107 @@ TEST_P(DBRateLimiterOnWriteWALTest, AutoWalFlush) {
   EXPECT_EQ(actual_auto_wal_flush_request,
             options_.rate_limiter->GetTotalRequests(Env::IO_USER));
 }
+
+class DBRateLimiterOnManualWALFlushTest
+    : public DBRateLimiterOnWriteTest,
+      public ::testing::WithParamInterface<Env::IOPriority> {
+ public:
+  static std::string GetTestNameSuffix(
+      ::testing::TestParamInfo<Env::IOPriority> info) {
+    std::ostringstream oss;
+    if (info.param == Env::IO_USER) {
+      oss << "RateLimitManualWALFlush";
+    } else if (info.param == Env::IO_TOTAL) {
+      oss << "NoRateLimitManualWALFlush";
+    } else if (info.param == Env::IO_HIGH) {
+      oss << "RateLimitManualWALFlushWithHighPriority";
+    } else {
+      oss << "RateLimitManualWALFlushWithLowPriority";
+    }
+    return oss.str();
+  }
+
+  explicit DBRateLimiterOnManualWALFlushTest()
+      : rate_limiter_priority_(GetParam()) {}
+
+  void Init() {
+    options_ = GetOptions();
+    // Enable manual WAL flush mode
+    options_.manual_wal_flush = true;
+    Reopen(options_);
+  }
+
+  WriteOptions GetWriteOptions() {
+    WriteOptions write_options;
+    // WAL must be enabled for manual WAL flush to work
+    write_options.disableWAL = false;
+    // In manual WAL flush mode, WAL write rate limiting should be done through
+    // FlushWAL(), not WriteOptions::rate_limiter_priority
+    write_options.rate_limiter_priority = Env::IO_TOTAL;
+    return write_options;
+  }
+
+ protected:
+  Env::IOPriority rate_limiter_priority_;
+};
+
+INSTANTIATE_TEST_CASE_P(DBRateLimiterOnManualWALFlushTest,
+                        DBRateLimiterOnManualWALFlushTest,
+                        ::testing::Values(Env::IO_TOTAL, Env::IO_USER,
+                                          Env::IO_HIGH, Env::IO_LOW),
+                        DBRateLimiterOnManualWALFlushTest::GetTestNameSuffix);
+
+TEST_P(DBRateLimiterOnManualWALFlushTest, ManualWALFlush) {
+  Init();
+
+  const bool no_rate_limit = (rate_limiter_priority_ == Env::IO_TOTAL);
+
+  ASSERT_EQ(0, options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL));
+
+  for (bool sync : {false, true}) {
+    std::int64_t prev_total_request =
+        options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL);
+
+    Status put_status = Put("key_" + std::to_string(sync),
+                            "value_" + std::to_string(sync), GetWriteOptions());
+
+    EXPECT_TRUE(put_status.ok());
+
+    // Since manual_wal_flush is enabled and write_options.rate_limiter_priority
+    // is IO_TOTAL, no rate limiting should have occurred for this user write
+    EXPECT_EQ(0, options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL) -
+                     prev_total_request);
+
+    // Now explicitly flush the WAL with the test's rate_limiter_priority
+    prev_total_request = options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL);
+    std::int64_t prev_priority_request =
+        options_.rate_limiter->GetTotalRequests(rate_limiter_priority_);
+
+    FlushWALOptions flush_options;
+    flush_options.sync = sync;
+    flush_options.rate_limiter_priority = rate_limiter_priority_;
+    Status flush_status = db_->FlushWAL(flush_options);
+
+    EXPECT_TRUE(flush_status.ok());
+
+    std::int64_t manual_wal_flush_requests_total =
+        options_.rate_limiter->GetTotalRequests(Env::IO_TOTAL) -
+        prev_total_request;
+    std::int64_t manual_wal_flush_requests_for_priority =
+        options_.rate_limiter->GetTotalRequests(rate_limiter_priority_) -
+        prev_priority_request;
+
+    if (no_rate_limit) {
+      EXPECT_EQ(0, manual_wal_flush_requests_total);
+      EXPECT_EQ(0, manual_wal_flush_requests_for_priority);
+    } else {
+      EXPECT_EQ(manual_wal_flush_requests_total,
+                manual_wal_flush_requests_for_priority);
+      EXPECT_GT(manual_wal_flush_requests_for_priority, 0);
+    }
+  }
+}
+
 }  // namespace ROCKSDB_NAMESPACE
 
 int main(int argc, char** argv) {

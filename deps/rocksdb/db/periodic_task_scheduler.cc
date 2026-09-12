@@ -8,7 +8,6 @@
 
 #include "rocksdb/system_clock.h"
 
-#ifndef ROCKSDB_LITE
 namespace ROCKSDB_NAMESPACE {
 
 // `timer_mutex` is a global mutex serves 3 purposes currently:
@@ -27,6 +26,7 @@ static const std::map<PeriodicTaskType, uint64_t> kDefaultPeriodSeconds = {
     {PeriodicTaskType::kPersistStats, kInvalidPeriodSec},
     {PeriodicTaskType::kFlushInfoLog, 10},
     {PeriodicTaskType::kRecordSeqnoTime, kInvalidPeriodSec},
+    {PeriodicTaskType::kTriggerCompaction, 12 * 60 * 60}  // 12 hours
 };
 
 static const std::map<PeriodicTaskType, std::string> kPeriodicTaskTypeNames = {
@@ -34,16 +34,20 @@ static const std::map<PeriodicTaskType, std::string> kPeriodicTaskTypeNames = {
     {PeriodicTaskType::kPersistStats, "pst_st"},
     {PeriodicTaskType::kFlushInfoLog, "flush_info_log"},
     {PeriodicTaskType::kRecordSeqnoTime, "record_seq_time"},
+    {PeriodicTaskType::kTriggerCompaction, "trigger_compaction"},
 };
 
 Status PeriodicTaskScheduler::Register(PeriodicTaskType task_type,
-                                       const PeriodicTaskFunc& fn) {
-  return Register(task_type, fn, kDefaultPeriodSeconds.at(task_type));
+                                       const PeriodicTaskFunc& fn,
+                                       bool run_immediately) {
+  return Register(task_type, fn, kDefaultPeriodSeconds.at(task_type),
+                  run_immediately);
 }
 
 Status PeriodicTaskScheduler::Register(PeriodicTaskType task_type,
                                        const PeriodicTaskFunc& fn,
-                                       uint64_t repeat_period_seconds) {
+                                       uint64_t repeat_period_seconds,
+                                       bool run_immediately) {
   MutexLock l(&timer_mutex);
   static std::atomic<uint64_t> initial_delay(0);
 
@@ -66,10 +70,13 @@ Status PeriodicTaskScheduler::Register(PeriodicTaskType task_type,
   std::string unique_id =
       kPeriodicTaskTypeNames.at(task_type) + std::to_string(id_++);
 
-  bool succeeded = timer_->Add(
-      fn, unique_id,
-      (initial_delay.fetch_add(1) % repeat_period_seconds) * kMicrosInSecond,
-      repeat_period_seconds * kMicrosInSecond);
+  uint64_t initial_delay_micros =
+      (initial_delay.fetch_add(1) % repeat_period_seconds) * kMicrosInSecond;
+  if (!run_immediately) {
+    initial_delay_micros += repeat_period_seconds * kMicrosInSecond;
+  }
+  bool succeeded = timer_->Add(fn, unique_id, initial_delay_micros,
+                               repeat_period_seconds * kMicrosInSecond);
   if (!succeeded) {
     return Status::Aborted("Failed to register periodic task");
   }
@@ -77,7 +84,7 @@ Status PeriodicTaskScheduler::Register(PeriodicTaskType task_type,
       task_type, TaskInfo{unique_id, repeat_period_seconds});
   if (!result.second) {
     return Status::Aborted("Failed to add periodic task");
-  };
+  }
   return Status::OK();
 }
 
@@ -95,7 +102,7 @@ Status PeriodicTaskScheduler::Unregister(PeriodicTaskType task_type) {
 }
 
 Timer* PeriodicTaskScheduler::Default() {
-  static Timer timer(SystemClock::Default().get());
+  STATIC_AVOID_DESTRUCTION(Timer, timer)(SystemClock::Default().get());
   return &timer;
 }
 
@@ -109,5 +116,3 @@ void PeriodicTaskScheduler::TEST_OverrideTimer(SystemClock* clock) {
 #endif  // NDEBUG
 
 }  // namespace ROCKSDB_NAMESPACE
-
-#endif  // ROCKSDB_LITE

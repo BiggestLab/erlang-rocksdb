@@ -23,6 +23,7 @@
 #include "rocksdb/slice.h"
 #include "rocksdb/table.h"
 #include "table/internal_iterator.h"
+#include "util/defer.h"
 #include "util/mutexlock.h"
 
 #ifdef ROCKSDB_UNITTESTS_WITH_CUSTOM_OBJECTS_FROM_STATIC_LIBS
@@ -49,14 +50,37 @@ extern const std::set<uint32_t> kFooterFormatVersionsToTest;
 // Return a random key with the specified length that may contain interesting
 // characters (e.g. \x00, \xff, etc.).
 enum RandomKeyType : char { RANDOM, LARGEST, SMALLEST, MIDDLE };
-extern std::string RandomKey(Random* rnd, int len,
-                             RandomKeyType type = RandomKeyType::RANDOM);
+std::string RandomKey(Random* rnd, int len,
+                      RandomKeyType type = RandomKeyType::RANDOM);
+
+enum class UserDefinedTimestampTestMode {
+  // Test does not enable user-defined timestamp feature.
+  kNone,
+  // Test enables user-defined timestamp feature. Write/read with min timestamps
+  kNormal,
+  // Test enables user-defined timestamp feature. Write/read with min timestamps
+  // Set `persist_user_defined_timestamps` to false.
+  kStripUserDefinedTimestamp,
+};
+
+const std::vector<UserDefinedTimestampTestMode>& GetUDTTestModes();
+
+bool IsUDTEnabled(const UserDefinedTimestampTestMode& test_mode);
+
+bool ShouldPersistUDT(const UserDefinedTimestampTestMode& test_mode);
 
 // Store in *dst a string of length "len" that will compress to
 // "N*compressed_fraction" bytes and return a Slice that references
 // the generated data.
-extern Slice CompressibleString(Random* rnd, double compressed_fraction,
-                                int len, std::string* dst);
+Slice CompressibleString(Random* rnd, double compressed_to_fraction, int len,
+                         std::string* dst);
+
+inline std::string CompressibleString(Random* rnd,
+                                      double compressed_to_fraction, int len) {
+  std::string dst;
+  CompressibleString(rnd, compressed_to_fraction, len, &dst);
+  return dst;
+}
 
 #ifndef NDEBUG
 // An internal comparator that just forward comparing results from the
@@ -70,7 +94,7 @@ class PlainInternalKeyComparator : public InternalKeyComparator {
 
   virtual ~PlainInternalKeyComparator() {}
 
-  virtual int Compare(const Slice& a, const Slice& b) const override {
+  int Compare(const Slice& a, const Slice& b) const override {
     return user_comparator()->Compare(a, b);
   }
 };
@@ -86,9 +110,9 @@ class SimpleSuffixReverseComparator : public Comparator {
  public:
   SimpleSuffixReverseComparator() {}
   static const char* kClassName() { return "SimpleSuffixReverseComparator"; }
-  virtual const char* Name() const override { return kClassName(); }
+  const char* Name() const override { return kClassName(); }
 
-  virtual int Compare(const Slice& a, const Slice& b) const override {
+  int Compare(const Slice& a, const Slice& b) const override {
     Slice prefix_a = Slice(a.data(), 8);
     Slice prefix_b = Slice(b.data(), 8);
     int prefix_comp = prefix_a.compare(prefix_b);
@@ -100,10 +124,10 @@ class SimpleSuffixReverseComparator : public Comparator {
       return -(suffix_a.compare(suffix_b));
     }
   }
-  virtual void FindShortestSeparator(std::string* /*start*/,
-                                     const Slice& /*limit*/) const override {}
+  void FindShortestSeparator(std::string* /*start*/,
+                             const Slice& /*limit*/) const override {}
 
-  virtual void FindShortSuccessor(std::string* /*key*/) const override {}
+  void FindShortSuccessor(std::string* /*key*/) const override {}
 };
 
 // Returns a user key comparator that can be used for comparing two uint64_t
@@ -111,10 +135,13 @@ class SimpleSuffixReverseComparator : public Comparator {
 // at once. Assumes same endian-ness is used though the database's lifetime.
 // Symantics of comparison would differ from Bytewise comparator in little
 // endian machines.
-extern const Comparator* Uint64Comparator();
+const Comparator* Uint64Comparator();
 
 // A wrapper api for getting the ComparatorWithU64Ts<BytewiseComparator>
-extern const Comparator* BytewiseComparatorWithU64TsWrapper();
+const Comparator* BytewiseComparatorWithU64TsWrapper();
+
+// A wrapper api for getting the ComparatorWithU64Ts<ReverseBytewiseComparator>
+const Comparator* ReverseBytewiseComparatorWithU64TsWrapper();
 
 class StringSink : public FSWritableFile {
  public:
@@ -144,9 +171,8 @@ class StringSink : public FSWritableFile {
     if (reader_contents_ != nullptr) {
       assert(reader_contents_->size() <= last_flush_);
       size_t offset = last_flush_ - reader_contents_->size();
-      *reader_contents_ = Slice(
-          contents_.data() + offset,
-          contents_.size() - offset);
+      *reader_contents_ =
+          Slice(contents_.data() + offset, contents_.size() - offset);
       last_flush_ = contents_.size();
     }
 
@@ -165,10 +191,15 @@ class StringSink : public FSWritableFile {
   void Drop(size_t bytes) {
     if (reader_contents_ != nullptr) {
       contents_.resize(contents_.size() - bytes);
-      *reader_contents_ = Slice(
-          reader_contents_->data(), reader_contents_->size() - bytes);
+      *reader_contents_ =
+          Slice(reader_contents_->data(), reader_contents_->size() - bytes);
       last_flush_ = contents_.size();
     }
+  }
+
+  uint64_t GetFileSize(const IOOptions& /*options*/,
+                       IODebugContext* /*dbg*/) override {
+    return contents_.size();
   }
 
  private:
@@ -267,6 +298,11 @@ class OverwritingStringSink : public FSWritableFile {
     if (last_flush_ > contents_.size()) last_flush_ = contents_.size();
   }
 
+  uint64_t GetFileSize(const IOOptions& /*options*/,
+                       IODebugContext* /*dbg*/) override {
+    return contents_.size();
+  }
+
  private:
   std::string contents_;
   Slice* reader_contents_;
@@ -282,7 +318,7 @@ class StringSource : public FSRandomAccessFile {
         mmap_(mmap),
         total_reads_(0) {}
 
-  virtual ~StringSource() { }
+  virtual ~StringSource() {}
 
   uint64_t Size() const { return contents_.size(); }
 
@@ -324,12 +360,17 @@ class StringSource : public FSRandomAccessFile {
     char* rid = id;
     rid = EncodeVarint64(rid, uniq_id_);
     rid = EncodeVarint64(rid, 0);
-    return static_cast<size_t>(rid-id);
+    return static_cast<size_t>(rid - id);
   }
 
   int total_reads() const { return total_reads_; }
 
   void set_total_reads(int tr) { total_reads_ = tr; }
+
+  IOStatus GetFileSize(uint64_t* file_size) override {
+    *file_size = contents_.size();
+    return IOStatus::OK();
+  }
 
  private:
   std::string contents_;
@@ -341,20 +382,19 @@ class StringSource : public FSRandomAccessFile {
 class NullLogger : public Logger {
  public:
   using Logger::Logv;
-  virtual void Logv(const char* /*format*/, va_list /*ap*/) override {}
-  virtual size_t GetLogFileSize() const override { return 0; }
+  void Logv(const char* /*format*/, va_list /*ap*/) override {}
+  size_t GetLogFileSize() const override { return 0; }
 };
 
 // Corrupts key by changing the type
-extern void CorruptKeyType(InternalKey* ikey);
+void CorruptKeyType(InternalKey* ikey);
 
-extern std::string KeyStr(const std::string& user_key,
-                          const SequenceNumber& seq, const ValueType& t,
-                          bool corrupt = false);
+std::string KeyStr(const std::string& user_key, const SequenceNumber& seq,
+                   const ValueType& t, bool corrupt = false);
 
-extern std::string KeyStr(uint64_t ts, const std::string& user_key,
-                          const SequenceNumber& seq, const ValueType& t,
-                          bool corrupt = false);
+std::string KeyStr(uint64_t ts, const std::string& user_key,
+                   const SequenceNumber& seq, const ValueType& t,
+                   bool corrupt = false);
 
 class SleepingBackgroundTask {
  public:
@@ -363,6 +403,16 @@ class SleepingBackgroundTask {
         should_sleep_(true),
         done_with_sleep_(false),
         sleeping_(false) {}
+
+  ~SleepingBackgroundTask() {
+    MutexLock l(&mutex_);
+    should_sleep_ = false;
+    while (sleeping_) {
+      assert(!should_sleep_);
+      bg_cv_.SignalAll();
+      bg_cv_.Wait();
+    }
+  }
 
   bool IsSleeping() {
     MutexLock l(&mutex_);
@@ -418,7 +468,7 @@ class SleepingBackgroundTask {
   }
 
   static void DoSleepTask(void* arg) {
-    reinterpret_cast<SleepingBackgroundTask*>(arg)->DoSleep();
+    static_cast<SleepingBackgroundTask*>(arg)->DoSleep();
   }
 
  private:
@@ -533,6 +583,14 @@ class StringFS : public FileSystemWrapper {
                     IODebugContext* /*dbg*/) override {
       contents_->append(slice.data(), slice.size());
       return IOStatus::OK();
+    }
+
+    uint64_t GetFileSize(const IOOptions& /*options*/,
+                         IODebugContext* /*dbg*/) override {
+      if (contents_ != nullptr) {
+        return contents_->size();
+      }
+      return 0;
     }
 
    private:
@@ -686,6 +744,149 @@ class StringFS : public FileSystemWrapper {
   std::unordered_map<std::string, std::string> files_;
 };
 
+// A compressor that essentially implements a custom compression algorithm
+// by leveraging an existing compression algorithm and putting a custom header
+// on it to detect any attempts to decompress it with the wrong compression
+// type or dictionary.
+template <CompressionType kCompression>
+struct CompressorCustomAlg : public CompressorWrapper {
+  static bool Supported() { return LZ4_Supported(); }
+
+  explicit CompressorCustomAlg(
+      std::unique_ptr<Compressor> wrapped =
+          GetBuiltinV2CompressionManager()->GetCompressor({}, kLZ4Compression))
+      : CompressorWrapper(std::move(wrapped)),
+        dictionary_hash_(GetSliceHash(wrapped_->GetSerializedDict())) {
+    static_assert(kCompression > kLastBuiltinCompression);
+  }
+
+  const char* Name() const override { return "CompressorCustomAlg"; }
+
+  CompressionType GetPreferredCompressionType() const override {
+    return kCompression;
+  }
+
+  std::unique_ptr<Compressor> Clone() const override {
+    return std::make_unique<CompressorCustomAlg>(wrapped_->Clone());
+  }
+
+  Status CompressBlock(Slice uncompressed_data, char* compressed_output,
+                       size_t* compressed_output_size,
+                       CompressionType* out_compression_type,
+                       ManagedWorkingArea* working_area) override {
+    size_t allowed_output_size = *compressed_output_size;
+    Status s = wrapped_->CompressBlock(uncompressed_data, compressed_output,
+                                       compressed_output_size,
+                                       out_compression_type, working_area);
+    if (s.ok() && *out_compression_type != kNoCompression) {
+      assert(*out_compression_type == kLZ4Compression);
+      if (*compressed_output_size + 5 > allowed_output_size) {
+        *out_compression_type = kNoCompression;
+        return Status::OK();
+      }
+      // Generate & insert header
+      std::memmove(compressed_output + 5, compressed_output,
+                   *compressed_output_size);
+      compressed_output[0] = lossless_cast<char>(kCompression);
+      EncodeFixed32(&compressed_output[1], dictionary_hash_);
+      *compressed_output_size += 5;
+      *out_compression_type = kCompression;
+    }
+    return s;
+  }
+
+  std::unique_ptr<Compressor> MaybeCloneSpecialized(
+      CacheEntryRole block_type, DictSampleArgs&& dict_samples) const override {
+    auto clone =
+        wrapped_->CloneMaybeSpecialized(block_type, std::move(dict_samples));
+    return std::make_unique<CompressorCustomAlg>(std::move(clone));
+  }
+
+ protected:
+  uint32_t dictionary_hash_;
+};
+
+// A decompressor suitable for all the instantiable CompressorCustomAlg
+// implementations. Can be configured to check that it is only used to
+// decompress certain types using SetAllowedTypes().
+struct DecompressorCustomAlg : public DecompressorWrapper {
+  using TypeSet = SmallEnumSet<CompressionType, kDisableCompressionOption>;
+
+  DecompressorCustomAlg(std::shared_ptr<Decompressor> wrapped =
+                            GetBuiltinV2CompressionManager()->GetDecompressor())
+      : DecompressorWrapper(std::move(wrapped)),
+        dictionary_hash_(GetSliceHash(wrapped_->GetSerializedDict())),
+        allowed_types_(TypeSet::All()) {}
+
+  const char* Name() const override { return "DecompressorCustomAlg"; }
+
+  Status MaybeCloneForDict(const Slice& serialized_dict,
+                           std::unique_ptr<Decompressor>* out) override {
+    Status s = wrapped_->MaybeCloneForDict(serialized_dict, out);
+    if (s.ok()) {
+      assert(*out != nullptr);
+      auto clone = std::make_unique<DecompressorCustomAlg>(std::move(*out));
+      clone->SetAllowedTypes(allowed_types_);
+      *out = std::move(clone);
+      assert(out->get()->GetSerializedDict() == serialized_dict);
+    } else {
+      assert(*out == nullptr);
+    }
+    return s;
+  }
+
+  Status ExtractUncompressedSize(Args& args) override {
+    if (args.compression_type >= kFirstCustomCompression &&
+        args.compression_type <= kLastCustomCompression) {
+      assert(args.compressed_data.size() > 0);
+      assert(args.compressed_data[0] ==
+             lossless_cast<char>(args.compression_type));
+      assert(DecodeFixed32(args.compressed_data.data() + 1) ==
+             dictionary_hash_);
+      // Strip off our header because ExtractUncompressedSize() is also going
+      // to strip off the uncompressed size data.
+      args.compressed_data.remove_prefix(5);
+      // It's ok to modify other parts of args if we restore to original
+      SaveAndRestore<CompressionType> save_compression_type(
+          &args.compression_type, kLZ4Compression);
+      return wrapped_->ExtractUncompressedSize(args);
+    } else {
+      // Also support built-in compressions
+      return wrapped_->ExtractUncompressedSize(args);
+    }
+  }
+
+  Status DecompressBlock(const Args& args, char* uncompressed_output) override {
+    if (args.compression_type >= kFirstCustomCompression &&
+        args.compression_type <= kLastCustomCompression) {
+      // Also allowed to copy args and modify
+      Args modified_args = args;
+      modified_args.compression_type = kLZ4Compression;
+      return wrapped_->DecompressBlock(modified_args, uncompressed_output);
+    } else {
+      // Also support built-in compressions
+      return wrapped_->DecompressBlock(args, uncompressed_output);
+    }
+  }
+
+  void SetAllowedTypes(const CompressionType* types_begin,
+                       const CompressionType* types_end) {
+    TypeSet allowed_types;
+    for (auto type = types_begin; type != types_end; ++type) {
+      allowed_types.Add(*type);
+    }
+    allowed_types_ = std::move(allowed_types);
+  }
+
+  void SetAllowedTypes(TypeSet allowed_types) {
+    allowed_types_ = std::move(allowed_types);
+  }
+
+ protected:
+  uint32_t dictionary_hash_;
+  SmallEnumSet<CompressionType, kDisableCompressionOption> allowed_types_;
+};
+
 // Randomly initialize the given DBOptions
 void RandomInitDBOptions(DBOptions* db_opt, Random* rnd);
 
@@ -703,14 +904,14 @@ class ChanglingMergeOperator : public MergeOperator {
 
   void SetName(const std::string& name) { name_ = name; }
 
-  virtual bool FullMergeV2(const MergeOperationInput& /*merge_in*/,
-                           MergeOperationOutput* /*merge_out*/) const override {
+  bool FullMergeV2(const MergeOperationInput& /*merge_in*/,
+                   MergeOperationOutput* /*merge_out*/) const override {
     return false;
   }
-  virtual bool PartialMergeMulti(const Slice& /*key*/,
-                                 const std::deque<Slice>& /*operand_list*/,
-                                 std::string* /*new_value*/,
-                                 Logger* /*logger*/) const override {
+  bool PartialMergeMulti(const Slice& /*key*/,
+                         const std::deque<Slice>& /*operand_list*/,
+                         std::string* /*new_value*/,
+                         Logger* /*logger*/) const override {
     return false;
   }
   static const char* kClassName() { return "ChanglingMergeOperator"; }
@@ -724,7 +925,7 @@ class ChanglingMergeOperator : public MergeOperator {
     }
   }
 
-  virtual const char* Name() const override { return name_.c_str(); }
+  const char* Name() const override { return name_.c_str(); }
 
  protected:
   std::string name_;
@@ -803,7 +1004,7 @@ class ChanglingCompactionFilterFactory : public CompactionFilterFactory {
 
 // The factory for the hacky skip list mem table that triggers flush after
 // number of entries exceeds a threshold.
-extern MemTableRepFactory* NewSpecialSkipListFactory(int num_entries_per_flush);
+MemTableRepFactory* NewSpecialSkipListFactory(int num_entries_per_flush);
 
 CompressionType RandomCompressionType(Random* rnd);
 
@@ -837,17 +1038,29 @@ Status TryDeleteDir(Env* env, const std::string& dirname);
 // Delete a directory if it exists
 void DeleteDir(Env* env, const std::string& dirname);
 
+// Find the FileType from the file path
+FileType GetFileType(const std::string& path);
+
+// Get the file number given the file path
+uint64_t GetFileNumber(const std::string& path);
+
 // Creates an Env from the system environment by looking at the system
 // environment variables.
 Status CreateEnvFromSystem(const ConfigOptions& options, Env** result,
                            std::shared_ptr<Env>* guard);
 
-#ifndef ROCKSDB_LITE
 // Registers the testutil classes with the ObjectLibrary
 int RegisterTestObjects(ObjectLibrary& library, const std::string& /*arg*/);
-#endif  // ROCKSDB_LITE
 
 // Register the testutil classes with the default ObjectRegistry/Library
 void RegisterTestLibrary(const std::string& arg = "");
+
+struct ReadOptionsNoIo : public ReadOptions {
+  ReadOptionsNoIo() { read_tier = ReadTier::kBlockCacheTier; }
+};
+extern const ReadOptionsNoIo kReadOptionsNoIo;
+
+extern const std::string kUnitTestDbId;
+
 }  // namespace test
 }  // namespace ROCKSDB_NAMESPACE

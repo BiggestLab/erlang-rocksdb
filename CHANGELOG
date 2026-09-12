@@ -1,3 +1,36 @@
+BiggestLab fork, 2026/03/27 (branch: rocksdb-upgrade)
+=====================================================
+
+- upgrade RocksDB from 7.7.3 to 10.10.1 (3 years of upstream improvements)
+- C++20 required (was C++17)
+- bundled ZSTD compression (statically linked, no runtime libzstd dependency)
+- add `iterator_move_n/3` NIF: batch read N key-value pairs in a single NIF call,
+  reduces NIF crossing overhead for large scans
+- add `bottommost_level_compaction` option for `compact_range/5`:
+  force | skip | if_have_compaction_filter | force_optimized
+  enables rewriting bottommost SST files to apply new compression settings
+- patch bundled snappy to keep RTTI enabled (required by RocksDB 10.x USE_RTTI=1)
+- use --whole-archive linking for static compression libraries
+- fix cmake dependency paths for ExternalProject find_package (snappy, lz4, zstd)
+- remove `access_hint_on_compaction_start` handler (API removed in RocksDB 9.0)
+- all 115 tests pass
+
+** BREAKING CHANGES **
+
+- minimum compiler: C++20 (GCC 11+, Clang 10+)
+- `access_hint` DB option is silently ignored (removed upstream in RocksDB 9.0)
+
+BiggestLab fork, 2026/03/25 (branch: master)
+=============================================
+
+- add `iterator_move_n/3`: batch iterator NIF for reading N entries in one call
+- add `bottommost_level_compaction` option to `compact_range`
+- add bundled ZSTD via git submodule (deps/zstd)
+- add `WITH_BUNDLE_ZSTD` cmake option
+- fix submodule init to use --recursive
+- secondary database support: open_secondary with column families
+- all 115 tests pass
+
 erlang-rocksdb 1.8.0, released on 2022/11/04
 ============================================
 

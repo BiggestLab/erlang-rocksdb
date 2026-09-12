@@ -230,7 +230,7 @@ IOStatus WinMmapReadableFile::Read(uint64_t offset, size_t n,
   } else if (offset + n > length_) {
     n = length_ - static_cast<size_t>(offset);
   }
-  *result = Slice(reinterpret_cast<const char*>(mapped_region_) + offset, n);
+  *result = Slice(static_cast<const char*>(mapped_region_) + offset, n);
   return s;
 }
 
@@ -240,6 +240,16 @@ IOStatus WinMmapReadableFile::InvalidateCache(size_t offset, size_t length) {
 
 size_t WinMmapReadableFile::GetUniqueId(char* id, size_t max_size) const {
   return GetUniqueIdFromFile(hFile_, id, max_size);
+}
+
+IOStatus WinMmapReadableFile::GetFileSize(uint64_t* size) {
+  LARGE_INTEGER fileSize;
+  if (GetFileSizeEx(hFile_, &fileSize)) {
+    *size = fileSize.QuadPart;
+    return IOStatus::OK();
+  } else {
+    return IOStatus::IOError("Failed to get file size", filename_);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -327,9 +337,9 @@ IOStatus WinMmapFile::MapNewRegion(const IOOptions& options,
   offset.QuadPart = file_offset_;
 
   // View must begin at the granularity aligned offset
-  mapped_begin_ = reinterpret_cast<char*>(
-      MapViewOfFileEx(hMap_, FILE_MAP_WRITE, offset.HighPart, offset.LowPart,
-                      view_size_, NULL));
+  mapped_begin_ =
+      static_cast<char*>(MapViewOfFileEx(hMap_, FILE_MAP_WRITE, offset.HighPart,
+                                         offset.LowPart, view_size_, NULL));
 
   if (!mapped_begin_) {
     status = IOErrorFromWindowsError(
@@ -733,6 +743,16 @@ size_t WinRandomAccessFile::GetUniqueId(char* id, size_t max_size) const {
 
 size_t WinRandomAccessFile::GetRequiredBufferAlignment() const {
   return GetAlignment();
+}
+
+IOStatus WinRandomAccessFile::GetFileSize(uint64_t* size) {
+  LARGE_INTEGER fileSize;
+  if (GetFileSizeEx(hFile_, &fileSize)) {
+    *size = fileSize.QuadPart;
+    return IOStatus::OK();
+  } else {
+    return IOStatus::IOError("Failed to get file size", filename_);
+  }
 }
 
 /////////////////////////////////////////////////////////////////////////////

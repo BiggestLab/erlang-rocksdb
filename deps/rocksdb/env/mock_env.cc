@@ -21,7 +21,7 @@
 #include "util/cast_util.h"
 #include "util/hash.h"
 #include "util/random.h"
-#include "util/rate_limiter.h"
+#include "util/rate_limiter_impl.h"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -33,7 +33,6 @@ int64_t MaybeCurrentTime(const std::shared_ptr<SystemClock>& clock) {
 }
 
 static std::unordered_map<std::string, OptionTypeInfo> time_elapse_type_info = {
-#ifndef ROCKSDB_LITE
     {"time_elapse_only_sleep",
      {0, OptionType::kBoolean, OptionVerificationType::kNormal,
       OptionTypeFlags::kCompareNever,
@@ -50,10 +49,8 @@ static std::unordered_map<std::string, OptionTypeInfo> time_elapse_type_info = {
         return Status::OK();
       },
       nullptr}},
-#endif  // ROCKSDB_LITE
 };
 static std::unordered_map<std::string, OptionTypeInfo> mock_sleep_type_info = {
-#ifndef ROCKSDB_LITE
     {"mock_sleep",
      {0, OptionType::kBoolean, OptionVerificationType::kNormal,
       OptionTypeFlags::kCompareNever,
@@ -70,7 +67,6 @@ static std::unordered_map<std::string, OptionTypeInfo> mock_sleep_type_info = {
         return Status::OK();
       },
       nullptr}},
-#endif  // ROCKSDB_LITE
 };
 }  // namespace
 
@@ -326,6 +322,11 @@ class MockRandomAccessFile : public FSRandomAccessFile {
     }
   }
 
+  IOStatus GetFileSize(uint64_t* size) override {
+    *size = file_->Size();
+    return IOStatus::OK();
+  }
+
  private:
   MemFile* file_;
   bool use_direct_io_;
@@ -487,7 +488,7 @@ class TestMemLogger : public Logger {
         options_(options),
         dbg_(dbg),
         flush_pending_(false) {}
-  ~TestMemLogger() override {}
+  ~TestMemLogger() override = default;
 
   void Flush() override {
     if (flush_pending_) {
@@ -572,11 +573,9 @@ class TestMemLogger : public Logger {
 };
 
 static std::unordered_map<std::string, OptionTypeInfo> mock_fs_type_info = {
-#ifndef ROCKSDB_LITE
     {"supports_direct_io",
      {0, OptionType::kBoolean, OptionVerificationType::kNormal,
       OptionTypeFlags::kNone}},
-#endif  // ROCKSDB_LITE
 };
 }  // namespace
 
@@ -1057,14 +1056,7 @@ Status MockEnv::CorruptBuffer(const std::string& fname) {
   return mock->CorruptBuffer(fname);
 }
 
-#ifndef ROCKSDB_LITE
 // This is to maintain the behavior before swithcing from InMemoryEnv to MockEnv
 Env* NewMemEnv(Env* base_env) { return MockEnv::Create(base_env); }
-
-#else  // ROCKSDB_LITE
-
-Env* NewMemEnv(Env* /*base_env*/) { return nullptr; }
-
-#endif  // !ROCKSDB_LITE
 
 }  // namespace ROCKSDB_NAMESPACE

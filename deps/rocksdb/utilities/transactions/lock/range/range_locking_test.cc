@@ -3,24 +3,20 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-#ifndef ROCKSDB_LITE
 #ifndef OS_WIN
 
-#include <algorithm>
 #include <functional>
+#include <iomanip>
 #include <string>
 #include <thread>
 
 #include "db/db_impl/db_impl.h"
-#include "port/port.h"
 #include "rocksdb/db.h"
 #include "rocksdb/options.h"
-#include "rocksdb/perf_context.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
-#include "utilities/transactions/lock/point/point_lock_manager_test.h"
-#include "utilities/transactions/pessimistic_transaction_db.h"
-#include "utilities/transactions/transaction_test.h"
+#include "utilities/transactions/lock/point/any_lock_manager_test.h"
+#include "utilities/transactions/transaction_db_mutex_impl.h"
 
 using std::string;
 
@@ -61,7 +57,7 @@ class RangeLockingTest : public ::testing::Test {
   PessimisticTransaction* NewTxn(
       TransactionOptions txn_opt = TransactionOptions()) {
     Transaction* txn = db->BeginTransaction(WriteOptions(), txn_opt);
-    return reinterpret_cast<PessimisticTransaction*>(txn);
+    return static_cast<PessimisticTransaction*>(txn);
   }
 };
 
@@ -142,20 +138,18 @@ TEST_F(RangeLockingTest, UpgradeLockAndGetConflict) {
   auto cf = db->DefaultColumnFamily();
   Status s;
   std::string value;
-  txn_options.lock_timeout= 10;
+  txn_options.lock_timeout = 10;
 
   Transaction* txn0 = db->BeginTransaction(write_options, txn_options);
   Transaction* txn1 = db->BeginTransaction(write_options, txn_options);
 
   // Get the shared lock in txn0
-  s = txn0->GetForUpdate(ReadOptions(), cf,
-                                Slice("a"), &value,
-                                false /*exclusive*/);
+  s = txn0->GetForUpdate(ReadOptions(), cf, Slice("a"), &value,
+                         false /*exclusive*/);
   ASSERT_TRUE(s.IsNotFound());
 
   // Get the shared lock on the same key in txn1
-  s = txn1->GetForUpdate(ReadOptions(), cf,
-                         Slice("a"), &value,
+  s = txn1->GetForUpdate(ReadOptions(), cf, Slice("a"), &value,
                          false /*exclusive*/);
   ASSERT_TRUE(s.IsNotFound());
 
@@ -169,7 +163,6 @@ TEST_F(RangeLockingTest, UpgradeLockAndGetConflict) {
   delete txn0;
   delete txn1;
 }
-
 
 TEST_F(RangeLockingTest, SnapshotValidation) {
   Status s;
@@ -449,14 +442,3 @@ int main(int /*argc*/, char** /*argv*/) {
 }
 
 #endif  // OS_WIN
-
-#else
-#include <stdio.h>
-
-int main(int /*argc*/, char** /*argv*/) {
-  fprintf(stderr,
-          "skipped as transactions are not supported in rocksdb_lite\n");
-  return 0;
-}
-
-#endif  // ROCKSDB_LITE

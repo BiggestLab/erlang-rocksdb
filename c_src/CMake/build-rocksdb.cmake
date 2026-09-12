@@ -23,6 +23,9 @@ list(APPEND rocksdb_CMAKE_ARGS -DWITH_TESTS=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_GFLAGS=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_JEMALLOC=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_TBB=${TBB_FOUND})
+# Pass this explicitly, always. Left unset, rocksdb's own default (ON) makes the
+# result depend on whether the build host has liburing headers installed.
+list(APPEND rocksdb_CMAKE_ARGS -DWITH_LIBURING=${WITH_LIBURING})
 
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_SNAPPY=${SNAPPY_FOUND})
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_LZ4=${LZ4_FOUND})
@@ -34,8 +37,11 @@ if(MSVC)
     list(APPEND rocksdb_CMAKE_ARGS -DWITHOUT_THIRDPARTY_INC=ON)
 endif()
 
+# Pass bundled dependency root dirs for RocksDB's Find*.cmake modules
+# Force MODULE mode for Snappy (skip CONFIG which has broken SnappyTargets.cmake)
 if(WITH_BUNDLE_SNAPPY)
     list(APPEND rocksdb_CMAKE_ARGS -Dsnappy_ROOT_DIR=${SNAPPY_ROOT_DIR})
+    list(APPEND rocksdb_CMAKE_ARGS -DSnappy_DIR=NOTFOUND)
 endif()
 
 if(WITH_BUNDLE_LZ4)
@@ -44,7 +50,6 @@ endif()
 
 if(WITH_BUNDLE_ZSTD)
     list(APPEND rocksdb_CMAKE_ARGS -Dzstd_ROOT_DIR=${ZSTD_ROOT_DIR})
-    list(APPEND rocksdb_CMAKE_ARGS -DCMAKE_PREFIX_PATH=${ZSTD_ROOT_DIR})
 endif()
 
 message(STATUS "cmake args ${rocksdb_CMAKE_ARGS}")

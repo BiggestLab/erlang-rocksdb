@@ -148,6 +148,29 @@ if(WITH_TBB)
   find_package(TBB REQUIRED)
 endif()
 
+# io_uring. RocksDB defaults WITH_LIBURING to ON and auto-detects liburing, so
+# on any build host that happens to carry the headers it compiles in calls to
+# io_uring_queue_init and appends uring::uring to ITS OWN THIRDPARTY_LIBS. We
+# link rocksdb as a static archive, so that list never reaches this target: the
+# NIF ends up referencing io_uring_* with no DT_NEEDED on liburing and dies at
+# load time with "undefined symbol: io_uring_queue_init" -- every rocksdb call
+# then reports undef. Declaring it here makes the choice explicit and identical
+# on every host, and build-rocksdb.cmake passes it down so rocksdb can no longer
+# decide on its own.
+option(WITH_LIBURING "build with liburing (io_uring async reads)" ON)
+if(WITH_LIBURING)
+  find_library(URING_LIBRARY NAMES uring)
+  if(NOT URING_LIBRARY)
+    message(FATAL_ERROR
+      "WITH_LIBURING is ON (the default) but liburing was not found. "
+      "Install it (Debian/Ubuntu: apt-get install liburing-dev) or build with "
+      "-DWITH_LIBURING=OFF to deliberately give up io_uring async reads. "
+      "This is a hard error on purpose: silently building without io_uring is "
+      "how every artifact so far ended up without it.")
+  endif()
+  message(STATUS "liburing enabled: ${URING_LIBRARY}")
+endif()
+
 # Use RocksDB provided by host system
 # (for users with extra requirements)
 option(WITH_SYSTEM_ROCKSDB "require and build with system rocksdb" OFF)
@@ -180,7 +203,7 @@ include_directories(${ROCKSDB_INCLUDE_DIRS})
 
 #--------------------------------------------------------------------------------
 
-set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD 17)
+set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD 20)
 set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${ErlangRocksDBNIF_TARGET} PROPERTY CXX_EXTENSIONS OFF)
 
@@ -251,18 +274,36 @@ if(APPLE)
 	set(TARGET_LINKER_OPTIONS "-flat_namespace -undefined suppress")
 endif(APPLE)
 
-target_link_libraries(
-    ${ErlangRocksDBNIF_TARGET}
-    PRIVATE
-    ${TARGET_LINKER_OPTIONS}
-    ${ROCKSDB_LIBRARIES}
-    ${ZSTD_LIBRARY}
-    ${LZ4_LIBRARY}
-    ${SNAPPY_LIBRARY}
-    ${BZIP2_LIBRARIES}
-    ${ZLIB_LIBRARY}
-    ${TBB_LIBRARIES}
-)
+if(NOT MSVC)
+    target_link_libraries(
+        ${ErlangRocksDBNIF_TARGET}
+        PRIVATE
+        ${TARGET_LINKER_OPTIONS}
+        -Wl,--whole-archive
+        ${ROCKSDB_LIBRARIES}
+        ${SNAPPY_LIBRARY}
+        ${LZ4_LIBRARY}
+        ${ZSTD_LIBRARY}
+        -Wl,--no-whole-archive
+        ${BZIP2_LIBRARIES}
+        ${ZLIB_LIBRARY}
+        ${TBB_LIBRARIES}
+        ${URING_LIBRARY}
+    )
+else()
+    target_link_libraries(
+        ${ErlangRocksDBNIF_TARGET}
+        PRIVATE
+        ${TARGET_LINKER_OPTIONS}
+        ${ROCKSDB_LIBRARIES}
+        ${ZSTD_LIBRARY}
+        ${LZ4_LIBRARY}
+        ${SNAPPY_LIBRARY}
+        ${BZIP2_LIBRARIES}
+        ${ZLIB_LIBRARY}
+        ${TBB_LIBRARIES}
+    )
+endif()
 
 if(MSVC)
 	target_link_libraries(
