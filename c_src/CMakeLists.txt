@@ -157,9 +157,17 @@ endif()
 # then reports undef. Declaring it here makes the choice explicit and identical
 # on every host, and build-rocksdb.cmake passes it down so rocksdb can no longer
 # decide on its own.
-option(WITH_LIBURING "build with liburing (io_uring async reads)" OFF)
+option(WITH_LIBURING "build with liburing (io_uring async reads)" ON)
 if(WITH_LIBURING)
-  find_library(URING_LIBRARY NAMES uring REQUIRED)
+  find_library(URING_LIBRARY NAMES uring)
+  if(NOT URING_LIBRARY)
+    message(FATAL_ERROR
+      "WITH_LIBURING is ON (the default) but liburing was not found. "
+      "Install it (Debian/Ubuntu: apt-get install liburing-dev) or build with "
+      "-DWITH_LIBURING=OFF to deliberately give up io_uring async reads. "
+      "This is a hard error on purpose: silently building without io_uring is "
+      "how every artifact so far ended up without it.")
+  endif()
   message(STATUS "liburing enabled: ${URING_LIBRARY}")
 endif()
 
