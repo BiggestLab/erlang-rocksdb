@@ -148,6 +148,21 @@ if(WITH_TBB)
   find_package(TBB REQUIRED)
 endif()
 
+# io_uring. RocksDB defaults WITH_LIBURING to ON and auto-detects liburing, so
+# on any build host that happens to carry the headers it compiles in calls to
+# io_uring_queue_init and appends uring::uring to ITS OWN THIRDPARTY_LIBS. We
+# link rocksdb as a static archive, so that list never reaches this target: the
+# NIF ends up referencing io_uring_* with no DT_NEEDED on liburing and dies at
+# load time with "undefined symbol: io_uring_queue_init" -- every rocksdb call
+# then reports undef. Declaring it here makes the choice explicit and identical
+# on every host, and build-rocksdb.cmake passes it down so rocksdb can no longer
+# decide on its own.
+option(WITH_LIBURING "build with liburing (io_uring async reads)" OFF)
+if(WITH_LIBURING)
+  find_library(URING_LIBRARY NAMES uring REQUIRED)
+  message(STATUS "liburing enabled: ${URING_LIBRARY}")
+endif()
+
 # Use RocksDB provided by host system
 # (for users with extra requirements)
 option(WITH_SYSTEM_ROCKSDB "require and build with system rocksdb" OFF)
@@ -265,6 +280,7 @@ if(NOT MSVC)
         ${BZIP2_LIBRARIES}
         ${ZLIB_LIBRARY}
         ${TBB_LIBRARIES}
+        ${URING_LIBRARY}
     )
 else()
     target_link_libraries(

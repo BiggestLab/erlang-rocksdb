@@ -23,6 +23,9 @@ list(APPEND rocksdb_CMAKE_ARGS -DWITH_TESTS=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_GFLAGS=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_JEMALLOC=OFF)
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_TBB=${TBB_FOUND})
+# Pass this explicitly, always. Left unset, rocksdb's own default (ON) makes the
+# result depend on whether the build host has liburing headers installed.
+list(APPEND rocksdb_CMAKE_ARGS -DWITH_LIBURING=${WITH_LIBURING})
 
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_SNAPPY=${SNAPPY_FOUND})
 list(APPEND rocksdb_CMAKE_ARGS -DWITH_LZ4=${LZ4_FOUND})
