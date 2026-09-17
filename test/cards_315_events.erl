@@ -1,5 +1,5 @@
 %% -------------------------------------------------------------------
-%% cards#315 items 4 and 8: background events, and compaction-time rules.
+%% PersistenceStore#315 items 4 and 8: background events, and compaction-time rules.
 %%
 %% Both are OPTIONS, not functions, so the failure mode they share is being
 %% silently ignored: a store that never notifies reads exactly like a store

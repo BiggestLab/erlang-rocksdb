@@ -120,7 +120,7 @@ ERL_NIF_TERM parse_bbt_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::BlockB
 ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptions& opts)
 {
     {
-        // cards#315 item 4. Handled before the main chain because it is the
+        // PersistenceStore#315 item 4. Handled before the main chain because it is the
         // only db option whose value is a pid, and a bad one must be refused
         // rather than fall through to be ignored -- a listener that was never
         // installed is indistinguishable from a store that is simply quiet.
@@ -436,7 +436,7 @@ ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptio
 ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnFamilyOptions& opts)
 {
     {
-        // cards#315 item 8. Same reasoning as the listener above: a misspelt
+        // PersistenceStore#315 item 8. Same reasoning as the listener above: a misspelt
         // rule must be refused, not silently dropped, or the caller gets a
         // column family that quietly never filters anything.
         int arity;
@@ -1471,7 +1471,7 @@ GetProperty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     return enif_make_tuple2(env, erocksdb::ATOM_OK, result);
 }   // erocksdb_status
 
-// cards#315 item 5. multi_get(DB, Keys, ReadOpts) |
+// PersistenceStore#315 item 5. multi_get(DB, Keys, ReadOpts) |
 // multi_get(DB, CF, Keys, ReadOpts) -> {ok, [{ok, Value} | not_found | {error, _}]}
 //
 // One result per key, IN THE ORDER THE KEYS WERE GIVEN, so a caller can zip

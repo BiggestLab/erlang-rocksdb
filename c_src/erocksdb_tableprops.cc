@@ -1,7 +1,7 @@
 // -------------------------------------------------------------------
 // Table properties and column-family metadata.
 //
-// cards#315 item 2 and item 7. `count` is O(rows in the window) with no
+// PersistenceStore#315 item 2 and item 7. `count` is O(rows in the window) with no
 // summary and no index; `get_approximate_sizes` is already exposed and answers
 // in COMPRESSED BYTES, which cannot be divided by a row size to get a row count
 // (measured: 1,097,568 bytes for a type holding 20,000 rows of 623 B, giving
@@ -187,7 +187,7 @@ sst_file_to_map(ErlNifEnv* env, const rocksdb::SstFileMetaData& file)
 
 // get_column_family_metadata(DB) | get_column_family_metadata(DB, CF)
 //
-// cards#315 item 7, and the storage-health half of cards#295: per-level file
+// PersistenceStore#315 item 7, and the storage-health half of PersistenceStore#295: per-level file
 // listing and sizes, which `get_property` cannot give as structured data.
 ERL_NIF_TERM
 GetColumnFamilyMetaData(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])

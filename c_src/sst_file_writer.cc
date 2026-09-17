@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------
-// SstFileWriter + IngestExternalFile. cards#315 item 3.
+// SstFileWriter + IngestExternalFile. PersistenceStore#315 item 3.
 // -------------------------------------------------------------------
 
 #include <string>

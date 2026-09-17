@@ -70,16 +70,16 @@
   iterators/3,
   iterator_move/2,
   iterator_move_n/3,
-  %% cards#315 item 1: the same moves, key only.
+  %% PersistenceStore#315 item 1: the same moves, key only.
   iterator_move_key/2,
   iterator_move_keys_n/3,
   iterator_refresh/1,
   iterator_close/1,
-  %% cards#315 item 5: one NIF crossing for N keys.
+  %% PersistenceStore#315 item 5: one NIF crossing for N keys.
   multi_get/3, multi_get/4
 ]).
 
-%% cards#315 items 2, 3 and 7: table properties, bulk build and ingest, and
+%% PersistenceStore#315 items 2, 3 and 7: table properties, bulk build and ingest, and
 %% per-level column-family metadata.
 -export([
   get_properties_of_all_tables/1, get_properties_of_all_tables/2,
@@ -427,7 +427,7 @@
                          {tailing, boolean()} |
                          {total_order_seek, boolean()} |
                          {prefix_same_as_start, boolean()} |
-                         %% cards#315 item 6. readahead_size is bytes; 0 means
+                         %% PersistenceStore#315 item 6. readahead_size is bytes; 0 means
                          %% RocksDB's own auto-readahead. async_io prefetches
                          %% the next blocks of a scan while the current one is
                          %% being served -- it needs a filesystem that supports
@@ -437,7 +437,7 @@
                          {async_io, boolean()} |
                          {snapshot, snapshot_handle()}].
 
-%% cards#315 item 2. One SST file's property block. `num_entries` is the field
+%% PersistenceStore#315 item 2. One SST file's property block. `num_entries` is the field
 %% this exists for: it is the only exposed way to get a ROW COUNT without
 %% walking the rows. `get_approximate_sizes` answers in COMPRESSED BYTES and
 %% cannot stand in -- measured at 1,097,568 bytes for a type holding 20,000
@@ -459,7 +459,7 @@
     column_family_name := binary()
 }.
 
-%% cards#315 item 7. Per-level file listing and sizes, as structured data
+%% PersistenceStore#315 item 7. Per-level file listing and sizes, as structured data
 %% rather than the text `get_property/2` returns.
 -type sst_file_metadata() :: #{
     file_name := binary(),
@@ -486,7 +486,7 @@
 
 -type sst_file_writer() :: reference() | binary().
 
-%% Column-family options cards#315 item 8 adds:
+%% Column-family options PersistenceStore#315 item 8 adds:
 %%
 %%   {compaction_filter, [compaction_rule()]}
 %%       at least one rule; an empty list is refused rather than installing a
@@ -511,7 +511,7 @@
                            {write_global_seqno, boolean()} |
                            {verify_checksums_before_ingest, boolean()}].
 
-%% cards#315 item 4. RocksDB background events, delivered to a process as
+%% PersistenceStore#315 item 4. RocksDB background events, delivered to a process as
 %% `{rocksdb_event, Event, Info}'.
 %%
 %% Write stalls, compaction backlog and memtable flushes can only be POLLED
@@ -541,7 +541,7 @@
 %% like a store with nothing to report.
 -type listener_option() :: {listener, pid() | {pid(), [event_name()]}}.
 
-%% cards#315 item 8. A compaction-time rule, applied while RocksDB is already
+%% PersistenceStore#315 item 8. A compaction-time rule, applied while RocksDB is already
 %% rewriting the data.
 %%
 %% `{drop_key_range, Start, Limit}' drops keys in [Start, Limit) -- the
@@ -1213,7 +1213,7 @@ iterator_refresh(_ITRHandle) ->
 %% @doc
 %% Retrieve many key/value pairs in one NIF call.
 %%
-%% cards#315 item 5. One result per key, IN THE ORDER THE KEYS WERE GIVEN, so a
+%% PersistenceStore#315 item 5. One result per key, IN THE ORDER THE KEYS WERE GIVEN, so a
 %% caller can zip the answers back against its own list. A key that is missing
 %% is `not_found' in its own position rather than an absence to be inferred
 %% from a shorter list.
@@ -1239,7 +1239,7 @@ multi_get(_DBHandle, _CFHandle, _Keys, _ReadOpts) ->
 %% @doc
 %% Table properties of every SST file in the default column family.
 %%
-%% cards#315 item 2. This reads the property BLOCKS RocksDB already keeps, not
+%% PersistenceStore#315 item 2. This reads the property BLOCKS RocksDB already keeps, not
 %% the data blocks, so its cost is a function of the file count rather than the
 %% row count. `num_entries' summed over the files of a column family is the
 %% only exposed way to get a row count without walking the rows.
@@ -1278,7 +1278,7 @@ get_properties_of_tables_in_range(_DBHandle, _CFHandle, _Ranges) ->
 %% @doc
 %% Per-level file listing and sizes for the default column family.
 %%
-%% cards#315 item 7. `get_property/2' can answer some of this as text; this
+%% PersistenceStore#315 item 7. `get_property/2' can answer some of this as text; this
 %% answers it as data, per file, including which files are being compacted.
 -spec get_column_family_metadata(DBHandle) -> Res when
   DBHandle :: db_handle(),
@@ -1298,7 +1298,7 @@ get_column_family_metadata(_DBHandle, _CFHandle) ->
 %% @doc
 %% Open an SST file writer.
 %%
-%% cards#315 item 3: bulk-build a file and ingest it, instead of re-keying row
+%% PersistenceStore#315 item 3: bulk-build a file and ingest it, instead of re-keying row
 %% by row through the write path.
 %%
 %% `CFOptions' must match the column family the file will be ingested into --

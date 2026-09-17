@@ -1,6 +1,6 @@
 // -------------------------------------------------------------------
 // EventListener: RocksDB background events delivered to an Erlang process.
-// cards#315 item 4, for cards#295.
+// PersistenceStore#315 item 4, for PersistenceStore#295.
 //
 // Write stalls, compaction backlog and memtable flushes can only be POLLED
 // through get_property/2 and stats, and a poll cannot see an event that starts
@@ -21,7 +21,7 @@ namespace rocksdb {
 
 namespace erocksdb {
 
-  // One bit per event, so a listener can ask for the three cards#295 wants
+  // One bit per event, so a listener can ask for the three PersistenceStore#295 wants
   // without also taking every table-file deletion on a busy store.
   enum EventBit : uint32_t {
       EVENT_FLUSH_BEGIN             = 1u << 0,

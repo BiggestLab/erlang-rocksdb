@@ -202,7 +202,7 @@ extern ERL_NIF_TERM ATOM_PREFIX_SAME_AS_START;
 extern ERL_NIF_TERM ATOM_READAHEAD_SIZE;
 extern ERL_NIF_TERM ATOM_ASYNC_IO;
 
-// cards#315: table properties, column-family metadata, SstFileWriter, ingest
+// PersistenceStore#315: table properties, column-family metadata, SstFileWriter, ingest
 extern ERL_NIF_TERM ATOM_FILE_NAME;
 extern ERL_NIF_TERM ATOM_FILE_PATH;
 extern ERL_NIF_TERM ATOM_FILE_SIZE;
@@ -235,7 +235,7 @@ extern ERL_NIF_TERM ATOM_INGEST_BEHIND;
 extern ERL_NIF_TERM ATOM_WRITE_GLOBAL_SEQNO;
 extern ERL_NIF_TERM ATOM_VERIFY_CHECKSUMS_BEFORE_INGEST;
 
-// cards#315 item 4: background events
+// PersistenceStore#315 item 4: background events
 extern ERL_NIF_TERM ATOM_LISTENER;
 extern ERL_NIF_TERM ATOM_ROCKSDB_EVENT;
 extern ERL_NIF_TERM ATOM_FLUSH_BEGIN;
@@ -272,7 +272,7 @@ extern ERL_NIF_TERM ATOM_NUM_OUTPUT_RECORDS;
 extern ERL_NIF_TERM ATOM_ELAPSED_MICROS;
 extern ERL_NIF_TERM ATOM_EXTERNAL_FILE_PATH;
 
-// cards#315 item 8: compaction-time rules
+// PersistenceStore#315 item 8: compaction-time rules
 extern ERL_NIF_TERM ATOM_COMPACTION_FILTER;
 extern ERL_NIF_TERM ATOM_COMPACT_ON_DELETION;
 extern ERL_NIF_TERM ATOM_DROP_KEY_RANGE;

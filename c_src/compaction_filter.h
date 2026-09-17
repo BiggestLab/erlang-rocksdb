@@ -1,7 +1,7 @@
 // -------------------------------------------------------------------
-// Compaction-time rules. cards#315 item 8.
+// Compaction-time rules. PersistenceStore#315 item 8.
 //
-// Retention and the cards#313 quarantine both want to express themselves as a
+// Retention and the PersistenceStore#313 quarantine both want to express themselves as a
 // rule applied while RocksDB is already rewriting the data, rather than as a
 // separate rewrite pass that reads and writes everything a second time.
 //

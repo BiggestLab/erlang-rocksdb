@@ -1,5 +1,5 @@
 %% -------------------------------------------------------------------
-%% cards#315: the RocksDB surface this binding did not expose.
+%% PersistenceStore#315: the RocksDB surface this binding did not expose.
 %%
 %% Every case here asserts BEHAVIOUR that the binding could not produce before,
 %% not that a function compiles. A green compile of a NIF stub proves only that

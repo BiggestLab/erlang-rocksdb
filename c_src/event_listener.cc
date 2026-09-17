@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------
-// cards#315 item 4: RocksDB background events, delivered to an Erlang process.
+// PersistenceStore#315 item 4: RocksDB background events, delivered to an Erlang process.
 // -------------------------------------------------------------------
 
 #include <memory>
@@ -110,7 +110,7 @@ public:
         emit(env, ATOM_MEMTABLE_SEALED, map);
     }
 
-    // The cards#295 event a poll cannot see: a stall that begins and ends
+    // The PersistenceStore#295 event a poll cannot see: a stall that begins and ends
     // between two samples leaves no trace in get_property.
     void OnStallConditionsChanged(const rocksdb::WriteStallInfo& info) override
     {

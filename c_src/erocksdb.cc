@@ -55,7 +55,7 @@ static ErlNifFunc nif_funcs[] =
         {"set_db_background_threads", 2, erocksdb::SetDBBackgroundThreads, ERL_NIF_REGULAR_BOUND},
         {"try_catch_up_with_primary", 1, erocksdb::TryCatchUpWithPrimary, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
-        // cards#315: table properties and per-level metadata. These read the
+        // PersistenceStore#315: table properties and per-level metadata. These read the
         // property blocks RocksDB already keeps, never the data blocks.
         {"get_properties_of_all_tables", 1, erocksdb::GetPropertiesOfAllTables, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get_properties_of_all_tables", 2, erocksdb::GetPropertiesOfAllTables, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -63,7 +63,7 @@ static ErlNifFunc nif_funcs[] =
         {"get_column_family_metadata", 1, erocksdb::GetColumnFamilyMetaData, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get_column_family_metadata", 2, erocksdb::GetColumnFamilyMetaData, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
-        // cards#315: bulk build and ingest, instead of re-keying row by row
+        // PersistenceStore#315: bulk build and ingest, instead of re-keying row by row
         // through the write path.
         {"sst_file_writer_open", 2, erocksdb::SstFileWriterOpen, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"sst_file_writer_put", 3, erocksdb::SstFileWriterPut, ERL_NIF_DIRTY_JOB_IO_BOUND},

@@ -1,8 +1,8 @@
 // -------------------------------------------------------------------
-// SstFileWriter as an Erlang resource. cards#315 item 3.
+// SstFileWriter as an Erlang resource. PersistenceStore#315 item 3.
 //
 // Bulk-build a rewritten store and ingest it, instead of re-keying row by row
-// through the write path. This is the shape the cards#313 repair migration
+// through the write path. This is the shape the PersistenceStore#313 repair migration
 // wants, and the shape any future rewrite wants.
 // -------------------------------------------------------------------
 

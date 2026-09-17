@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------
-// cards#315 item 8: compaction-time rules.
+// PersistenceStore#315 item 8: compaction-time rules.
 // -------------------------------------------------------------------
 
 #include <memory>
@@ -86,7 +86,7 @@ private:
     // anything about it, and dropping on a failed parse is how a retention
     // rule silently deletes the rows whose keys it did not understand --
     // which, on this platform, is exactly the malformed-key population
-    // cards#313 exists to deal with.
+    // PersistenceStore#313 exists to deal with.
     static bool below_decimal(const CompactionRule& rule, const rocksdb::Slice& key)
     {
         if (rule.width == 0 || key.size() < rule.offset + rule.width)

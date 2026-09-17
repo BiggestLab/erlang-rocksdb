@@ -410,7 +410,7 @@ IteratorMoveN(
     return enif_make_tuple2(env, ATOM_OK, result_out);
 }   // erocksdb::IteratorMoveN
 
-// cards#315 item 1: the same walk without the value.
+// PersistenceStore#315 item 1: the same walk without the value.
 //
 // `iterator_move/2` always returns {ok, Key, Value} and the NIF has already
 // copied the value into an Erlang binary by the time the caller matches on it.
@@ -497,7 +497,7 @@ IteratorMoveKey(
 
 }   // erocksdb::IteratorMoveKey
 
-// cards#315 item 1, batched: iterator_move_n/3 without the values.
+// PersistenceStore#315 item 1, batched: iterator_move_n/3 without the values.
 ERL_NIF_TERM
 IteratorMoveKeysN(
     ErlNifEnv* env,
