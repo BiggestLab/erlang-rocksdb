@@ -245,6 +245,8 @@ target_sources(${ErlangRocksDBNIF_TARGET}
     ${CMAKE_CURRENT_SOURCE_DIR}/erocksdb_iter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/erocksdb_snapshot.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/erocksdb_tableprops.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/event_listener.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/compaction_filter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/sst_file_writer.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/rate_limiter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/refobjects.cc

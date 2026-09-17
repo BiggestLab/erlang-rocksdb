@@ -34,7 +34,9 @@
 #include "atoms.h"
 #include "refobjects.h"
 #include "util.h"
+#include "compaction_filter.h"
 #include "erocksdb_db.h"
+#include "event_listener.h"
 #include "cache.h"
 #include "statistics.h"
 #include "rate_limiter.h"
@@ -117,6 +119,21 @@ ERL_NIF_TERM parse_bbt_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::BlockB
 
 ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptions& opts)
 {
+    {
+        // cards#315 item 4. Handled before the main chain because it is the
+        // only db option whose value is a pid, and a bad one must be refused
+        // rather than fall through to be ignored -- a listener that was never
+        // installed is indistinguishable from a store that is simply quiet.
+        int arity;
+        const ERL_NIF_TERM* option;
+        if (enif_get_tuple(env, item, &arity, &option) && 2 == arity &&
+            option[0] == erocksdb::ATOM_LISTENER)
+        {
+            if (!erocksdb::parse_listener_option(env, option[1], opts))
+                return erocksdb::ATOM_BADARG;
+            return erocksdb::ATOM_OK;
+        }
+    }
     int arity;
     const ERL_NIF_TERM* option;
     if (enif_get_tuple(env, item, &arity, &option) && 2==arity)
@@ -418,6 +435,28 @@ ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptio
 
 ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnFamilyOptions& opts)
 {
+    {
+        // cards#315 item 8. Same reasoning as the listener above: a misspelt
+        // rule must be refused, not silently dropped, or the caller gets a
+        // column family that quietly never filters anything.
+        int arity;
+        const ERL_NIF_TERM* option;
+        if (enif_get_tuple(env, item, &arity, &option) && 2 == arity)
+        {
+            if (option[0] == erocksdb::ATOM_COMPACTION_FILTER)
+            {
+                if (!erocksdb::parse_compaction_filter_option(env, option[1], opts))
+                    return erocksdb::ATOM_BADARG;
+                return erocksdb::ATOM_OK;
+            }
+            if (option[0] == erocksdb::ATOM_COMPACT_ON_DELETION)
+            {
+                if (!erocksdb::parse_compact_on_deletion_option(env, option[1], opts))
+                    return erocksdb::ATOM_BADARG;
+                return erocksdb::ATOM_OK;
+            }
+        }
+    }
     int arity;
     const ERL_NIF_TERM* option;
     if (enif_get_tuple(env, item, &arity, &option) && arity == 2)
@@ -1044,8 +1083,11 @@ Open(
         {
             return enif_make_badarg(env);
         }
-        fold(env, argv[1], parse_db_option, *db_opts);
-        fold(env, argv[1], parse_cf_option, *cf_opts);
+        if (fold(env, argv[1], parse_db_option, *db_opts) != erocksdb::ATOM_OK ||
+            fold(env, argv[1], parse_cf_option, *cf_opts) != erocksdb::ATOM_OK)
+        {
+            return enif_make_badarg(env);
+        }
         break;
     case open_mode::secondary:
         if(!enif_get_string(env, argv[0], db_name, sizeof(db_name), ERL_NIF_LATIN1) ||
@@ -1054,8 +1096,11 @@ Open(
         {
             return enif_make_badarg(env);
         }
-        fold(env, argv[2], parse_db_option, *db_opts);
-        fold(env, argv[2], parse_cf_option, *cf_opts);
+        if (fold(env, argv[2], parse_db_option, *db_opts) != erocksdb::ATOM_OK ||
+            fold(env, argv[2], parse_cf_option, *cf_opts) != erocksdb::ATOM_OK)
+        {
+            return enif_make_badarg(env);
+        }
         break;
     }
 
@@ -1132,7 +1177,8 @@ OpenWithCf(
         {
             return enif_make_badarg(env);
         }   // if
-        fold(env, argv[1], parse_db_option, db_opts);
+        if (fold(env, argv[1], parse_db_option, db_opts) != erocksdb::ATOM_OK)
+            return enif_make_badarg(env);
         tail = argv[2];
         enif_get_list_length(env, argv[2], &num_cols);
         break;
@@ -1143,7 +1189,8 @@ OpenWithCf(
         {
             return enif_make_badarg(env);
         }   // if
-        fold(env, argv[2], parse_db_option, db_opts);
+        if (fold(env, argv[2], parse_db_option, db_opts) != erocksdb::ATOM_OK)
+            return enif_make_badarg(env);
         tail = argv[3];
         enif_get_list_length(env, argv[3], &num_cols);
         break;
@@ -1154,7 +1201,7 @@ OpenWithCf(
         ERL_NIF_TERM result = parse_cf_descriptor(env, head, column_families);
         if (result != ATOM_OK)
         {
-            return result;
+            return enif_make_badarg(env);
         }
     }
 
@@ -1308,7 +1355,7 @@ OpenOptimisticTransactionDB(
         ERL_NIF_TERM result = parse_cf_descriptor(env, head, column_families);
         if (result != ATOM_OK)
         {
-            return result;
+            return enif_make_badarg(env);
         }
     }
 
@@ -2049,8 +2096,15 @@ CompactRange(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
     ReferencePtr<DbObject> db_ptr;
     rocksdb::ColumnFamilyHandle *column_family;
-    rocksdb::Slice begin;
-    rocksdb::Slice end;
+    // A NULL POINTER is how CompactRange is told "the whole key space". These
+    // used to be Slice objects assigned `nullptr`, which runs Slice's
+    // const char* constructor over a null pointer and leaves a non-null
+    // pointer to an EMPTY slice -- so every call compacted the range ["", ""]
+    // and nothing moved.
+    rocksdb::Slice begin_slice;
+    rocksdb::Slice end_slice;
+    const rocksdb::Slice *begin = nullptr;
+    const rocksdb::Slice *end = nullptr;
     rocksdb::Status status;
     ReferencePtr<ColumnFamilyObject> cf_ptr;
     int i = 1;
@@ -2070,29 +2124,25 @@ CompactRange(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
         column_family = db_ptr->m_Db->DefaultColumnFamily();
     }
 
-    if (argv[i] == erocksdb::ATOM_UNDEFINED)
+    if (argv[i] != erocksdb::ATOM_UNDEFINED)
     {
-        begin = nullptr;
-    }
-    else if (!binary_to_slice(env, argv[i], &begin))
-    {
-        return enif_make_badarg(env);
+        if (!binary_to_slice(env, argv[i], &begin_slice))
+            return enif_make_badarg(env);
+        begin = &begin_slice;
     }
 
-    if (argv[i + 1] == erocksdb::ATOM_UNDEFINED)
+    if (argv[i + 1] != erocksdb::ATOM_UNDEFINED)
     {
-        end = nullptr;
-    }
-    else if (!binary_to_slice(env, argv[i + 1], &end))
-    {
-        return enif_make_badarg(env);
+        if (!binary_to_slice(env, argv[i + 1], &end_slice))
+            return enif_make_badarg(env);
+        end = &end_slice;
     }
 
     // parse read_options
     rocksdb::CompactRangeOptions opts;
     fold(env, argv[i + 2], parse_compact_range_option, opts);
 
-    status = db_ptr->m_Db->CompactRange(opts, column_family, &begin, &end);
+    status = db_ptr->m_Db->CompactRange(opts, column_family, begin, end);
     if (!status.ok())
         return error_tuple(env, ATOM_ERROR, status);
 

@@ -486,6 +486,23 @@
 
 -type sst_file_writer() :: reference() | binary().
 
+%% Column-family options cards#315 item 8 adds:
+%%
+%%   {compaction_filter, [compaction_rule()]}
+%%       at least one rule; an empty list is refused rather than installing a
+%%       filter that keeps everything.
+%%
+%%   {compact_on_deletion, {Window, Trigger}} | {Window, Trigger, Ratio}
+%%       mark a file as needing compaction once it holds Trigger tombstones in
+%%       any Window consecutive entries, or a tombstone ratio >= Ratio. This is
+%%       the other half of a retention rule: the rule decides WHAT to drop,
+%%       this decides when RocksDB bothers to rewrite the file holding it.
+-type compaction_filter_option() :: {compaction_filter, [compaction_rule()]}.
+-type compact_on_deletion_option() ::
+    {compact_on_deletion,
+     {Window :: pos_integer(), Trigger :: pos_integer()}
+     | {Window :: pos_integer(), Trigger :: pos_integer(), Ratio :: number()}}.
+
 -type ingest_options() :: [{move_files, boolean()} |
                            {snapshot_consistency, boolean()} |
                            {allow_global_seqno, boolean()} |
@@ -493,6 +510,61 @@
                            {ingest_behind, boolean()} |
                            {write_global_seqno, boolean()} |
                            {verify_checksums_before_ingest, boolean()}].
+
+%% cards#315 item 4. RocksDB background events, delivered to a process as
+%% `{rocksdb_event, Event, Info}'.
+%%
+%% Write stalls, compaction backlog and memtable flushes can only be POLLED
+%% through get_property/2, and a poll cannot see an event that begins and ends
+%% between two samples. A stall in particular is invisible to polling and is
+%% exactly the thing a caller needs to know about.
+%%
+%% Delivery is fire and forget, from a RocksDB background thread. If the
+%% process is gone the event is dropped -- a dead listener must not take a
+%% compaction with it -- and there is no ordering guarantee between events
+%% raised by different background threads.
+-type event_name() :: flush_begin
+                    | flush_completed
+                    | compaction_begin
+                    | compaction_completed
+                    | memtable_sealed
+                    | stall_conditions_changed
+                    | background_error
+                    | external_file_ingested
+                    | table_file_deleted.
+
+-type write_stall_condition() :: normal | delayed | stopped.
+
+%% `{listener, Pid}' asks for every event; `{listener, {Pid, [event_name()]}}'
+%% for a named subset. An unknown event name is REFUSED at open time rather
+%% than ignored, because a listener that silently never fires reads exactly
+%% like a store with nothing to report.
+-type listener_option() :: {listener, pid() | {pid(), [event_name()]}}.
+
+%% cards#315 item 8. A compaction-time rule, applied while RocksDB is already
+%% rewriting the data.
+%%
+%% `{drop_key_range, Start, Limit}' drops keys in [Start, Limit) -- the
+%% quarantine shape: remove a range without a rewrite pass that reads and
+%% writes everything a second time.
+%%
+%% `{drop_below_decimal, Offset, Width, Cutoff}' drops keys whose fixed-width
+%% decimal field at [Offset, Offset+Width) is numerically below Cutoff -- the
+%% retention shape, for a key that leads with a zero-padded timestamp.
+%%
+%% Rules are evaluated in C++, not by calling back into Erlang per key: a
+%% compaction over a million rows would otherwise be a million blocking round
+%% trips on a thread that holds the compaction up, and a stalled compaction
+%% stalls writes.
+%%
+%% A rule can only DROP. A key too short to hold the field, or holding
+%% something that is not all digits, is KEPT: a rule that cannot read a key has
+%% not decided anything about it.
+-type compaction_rule() :: {drop_key_range, Start :: binary(), Limit :: binary()}
+                         | {drop_below_decimal,
+                            Offset :: non_neg_integer(),
+                            Width :: pos_integer(),
+                            Cutoff :: non_neg_integer()}.
 
 -type sst_file_info() :: #{
     file_path := binary(),
