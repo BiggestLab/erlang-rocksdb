@@ -876,6 +876,15 @@ ERL_NIF_TERM parse_read_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ReadO
             opts.tailing = (option[1] == erocksdb::ATOM_TRUE);
         else if (option[0] == erocksdb::ATOM_TOTAL_ORDER_SEEK)
             opts.total_order_seek = (option[1] == erocksdb::ATOM_TRUE);
+        else if (option[0] == erocksdb::ATOM_READAHEAD_SIZE)
+        {
+            ErlNifUInt64 readahead;
+            if(!enif_get_uint64(env, option[1], &readahead))
+                return erocksdb::ATOM_BADARG;
+            opts.readahead_size = (size_t)readahead;
+        }
+        else if (option[0] == erocksdb::ATOM_ASYNC_IO)
+            opts.async_io = (option[1] == erocksdb::ATOM_TRUE);
         else if (option[0] == erocksdb::ATOM_SNAPSHOT)
         {
             erocksdb::ReferencePtr<erocksdb::SnapshotObject> snapshot_ptr;
@@ -1414,6 +1423,93 @@ GetProperty(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     memcpy(enif_make_new_binary(env, value.size(), &result), value.c_str(), value.size());
     return enif_make_tuple2(env, erocksdb::ATOM_OK, result);
 }   // erocksdb_status
+
+// cards#315 item 5. multi_get(DB, Keys, ReadOpts) |
+// multi_get(DB, CF, Keys, ReadOpts) -> {ok, [{ok, Value} | not_found | {error, _}]}
+//
+// One result per key, IN THE ORDER THE KEYS WERE GIVEN, so a caller can zip
+// them back against its own list. A key that is missing is `not_found` in its
+// own position rather than an absence the caller has to infer from a shorter
+// list -- which is the shape that makes a batched read silently lose a key.
+ERL_NIF_TERM
+MultiGet(
+  ErlNifEnv* env,
+  int argc,
+  const ERL_NIF_TERM argv[])
+{
+    ReferencePtr<DbObject> db_ptr;
+    if(!enif_get_db(env, argv[0], &db_ptr))
+        return enif_make_badarg(env);
+
+    int i = (argc == 4) ? 2 : 1;
+
+    if(!enif_is_list(env, argv[i]) || !enif_is_list(env, argv[i+1]))
+        return enif_make_badarg(env);
+
+    std::vector<rocksdb::Slice> keys;
+    ERL_NIF_TERM head, tail = argv[i];
+    while(enif_get_list_cell(env, tail, &head, &tail))
+    {
+        rocksdb::Slice key;
+        if(!binary_to_slice(env, head, &key))
+            return enif_make_badarg(env);
+        keys.push_back(key);
+    }
+
+    if(keys.empty())
+        return enif_make_tuple2(env, ATOM_OK, enif_make_list(env, 0));
+
+    rocksdb::ReadOptions opts;
+    fold(env, argv[i+1], parse_read_option, opts);
+
+    rocksdb::ColumnFamilyHandle* cf;
+    if(argc == 4)
+    {
+        ReferencePtr<ColumnFamilyObject> cf_ptr;
+        if(!enif_get_cf(env, argv[1], &cf_ptr))
+            return enif_make_badarg(env);
+        cf = cf_ptr->m_ColumnFamily;
+    }
+    else
+    {
+        cf = db_ptr->m_Db->DefaultColumnFamily();
+    }
+
+    std::vector<rocksdb::ColumnFamilyHandle*> cfs(keys.size(), cf);
+    std::vector<std::string> values;
+    std::vector<rocksdb::Status> statuses =
+        db_ptr->m_Db->MultiGet(opts, cfs, keys, &values);
+
+    ERL_NIF_TERM result = enif_make_list(env, 0);
+    for(size_t n = statuses.size(); n > 0; n--)
+    {
+        size_t idx = n - 1;
+        ERL_NIF_TERM entry;
+        if(statuses[idx].ok())
+        {
+            ERL_NIF_TERM value_bin;
+            unsigned char* buf = enif_make_new_binary(env, values[idx].size(), &value_bin);
+            if(values[idx].size() > 0)
+                memcpy(buf, values[idx].data(), values[idx].size());
+            entry = enif_make_tuple2(env, ATOM_OK, value_bin);
+        }
+        else if(statuses[idx].IsNotFound())
+        {
+            entry = ATOM_NOT_FOUND;
+        }
+        else if(statuses[idx].IsCorruption())
+        {
+            entry = error_tuple(env, ATOM_CORRUPTION, statuses[idx]);
+        }
+        else
+        {
+            entry = error_tuple(env, ATOM_UNKNOWN_STATUS_ERROR, statuses[idx]);
+        }
+        result = enif_make_list_cell(env, entry, result);
+    }
+
+    return enif_make_tuple2(env, ATOM_OK, result);
+}
 
 ERL_NIF_TERM
 Get(

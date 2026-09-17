@@ -94,6 +94,15 @@ parse_iterator_options(
                 opts.total_order_seek = (option[1] == erocksdb::ATOM_TRUE);
             else if (option[0] == erocksdb::ATOM_PREFIX_SAME_AS_START)
                 opts.prefix_same_as_start = (option[1] == erocksdb::ATOM_TRUE);
+            else if (option[0] == erocksdb::ATOM_READAHEAD_SIZE)
+            {
+                ErlNifUInt64 readahead;
+                if(!enif_get_uint64(env, option[1], &readahead))
+                    return 0;
+                opts.readahead_size = (size_t)readahead;
+            }
+            else if (option[0] == erocksdb::ATOM_ASYNC_IO)
+                opts.async_io = (option[1] == erocksdb::ATOM_TRUE);
             else if (option[0] == erocksdb::ATOM_SNAPSHOT)
             {
                 erocksdb::ReferencePtr<erocksdb::SnapshotObject> snapshot_ptr;
@@ -400,6 +409,157 @@ IteratorMoveN(
 
     return enif_make_tuple2(env, ATOM_OK, result_out);
 }   // erocksdb::IteratorMoveN
+
+// cards#315 item 1: the same walk without the value.
+//
+// `iterator_move/2` always returns {ok, Key, Value} and the NIF has already
+// copied the value into an Erlang binary by the time the caller matches on it.
+// `rocksdb:fold_keys/4,5` looks like the answer and is not -- it wraps this
+// same iterator and drops the value in ERLANG, after the copy.
+//
+// Measured on nirvana, 100,000 rows, n=5, warm cache, identical keys and
+// blocks with only the value size varied: 155.8 ms at 0 B against 211.8 ms at
+// 400 B and 256.8 ms at 1 KB. The slope is this copy. RocksDB keeps keys and
+// values in the same data block, so this saves the copy and the GC pressure,
+// not the block read.
+ERL_NIF_TERM
+IteratorMoveKey(
+    ErlNifEnv* env,
+    int /*argc*/,
+    const ERL_NIF_TERM argv[])
+{
+    const ERL_NIF_TERM& itr_handle_ref   = argv[0];
+    const ERL_NIF_TERM& action_or_target = argv[1];
+
+    ReferencePtr<ItrObject> itr_ptr;
+    itr_ptr.assign(ItrObject::RetrieveItrObject(env, itr_handle_ref));
+
+    if(NULL==itr_ptr.get())
+        return enif_make_badarg(env);
+
+    rocksdb::Iterator* itr = itr_ptr->m_Iterator;
+    rocksdb::Slice key;
+
+    if(enif_is_atom(env, action_or_target))
+    {
+        if(ATOM_FIRST == action_or_target) itr->SeekToFirst();
+        if(ATOM_LAST == action_or_target) itr->SeekToLast();
+
+        if(!itr->Valid())
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_INVALID_ITERATOR);
+
+        if(ATOM_NEXT == action_or_target) itr->Next();
+        if(ATOM_PREV == action_or_target) itr->Prev();
+    }
+    else if(enif_is_tuple(env, action_or_target))
+    {
+        int arity;
+        const ERL_NIF_TERM* seek;
+        if(enif_get_tuple(env, action_or_target, &arity, &seek) && 2==arity)
+        {
+            if(seek[0] == erocksdb::ATOM_SEEK_FOR_PREV)
+            {
+                if(!binary_to_slice(env, seek[1], &key))
+                    return error_einval(env);
+                itr->SeekForPrev(key);
+            }
+            else if(seek[0] == erocksdb::ATOM_SEEK)
+            {
+                if(!binary_to_slice(env, seek[1], &key))
+                    return error_einval(env);
+                itr->Seek(key);
+            }
+            else
+            {
+                return enif_make_badarg(env);
+            }
+        }
+        else
+        {
+            return enif_make_badarg(env);
+        }
+    }
+    else
+    {
+        if(!binary_to_slice(env, action_or_target, &key))
+            return error_einval(env);
+        itr->Seek(key);
+    }
+
+    if(!itr->Valid())
+        return enif_make_tuple2(env, ATOM_ERROR, ATOM_INVALID_ITERATOR);
+
+    rocksdb::Status status = itr->status();
+    if(!status.ok())
+        return error_tuple(env, ATOM_ERROR, status);
+
+    return enif_make_tuple2(env, ATOM_OK, slice_to_binary(env, itr->key()));
+
+}   // erocksdb::IteratorMoveKey
+
+// cards#315 item 1, batched: iterator_move_n/3 without the values.
+ERL_NIF_TERM
+IteratorMoveKeysN(
+    ErlNifEnv* env,
+    int /*argc*/,
+    const ERL_NIF_TERM argv[])
+{
+    const ERL_NIF_TERM& itr_handle_ref = argv[0];
+    const ERL_NIF_TERM& direction      = argv[1];
+    const ERL_NIF_TERM& count_term     = argv[2];
+
+    ReferencePtr<ItrObject> itr_ptr;
+    itr_ptr.assign(ItrObject::RetrieveItrObject(env, itr_handle_ref));
+
+    if(NULL == itr_ptr.get())
+        return enif_make_badarg(env);
+
+    bool is_next;
+    if(ATOM_NEXT == direction)
+        is_next = true;
+    else if(ATOM_PREV == direction)
+        is_next = false;
+    else
+        return enif_make_badarg(env);
+
+    unsigned int count;
+    if(!enif_get_uint(env, count_term, &count) || count == 0)
+        return enif_make_badarg(env);
+
+    rocksdb::Iterator* itr = itr_ptr->m_Iterator;
+
+    if(NULL == itr)
+        return enif_make_tuple2(env, ATOM_ERROR, ATOM_INVALID_ITERATOR);
+
+    ERL_NIF_TERM result = enif_make_list(env, 0);
+
+    for(unsigned int i = 0; i < count; i++)
+    {
+        // Validity BEFORE advancing: Next()/Prev() on an invalid iterator is
+        // undefined behaviour in RocksDB.
+        if(!itr->Valid())
+            break;
+
+        if(is_next)
+            itr->Next();
+        else
+            itr->Prev();
+
+        if(!itr->Valid())
+            break;
+
+        rocksdb::Status status = itr->status();
+        if(!status.ok())
+            break;
+
+        result = enif_make_list_cell(env, slice_to_binary(env, itr->key()), result);
+    }
+
+    ERL_NIF_TERM result_out;
+    enif_make_reverse_list(env, result, &result_out);
+
+    return enif_make_tuple2(env, ATOM_OK, result_out);
+}   // erocksdb::IteratorMoveKeysN
 
 ERL_NIF_TERM
 IteratorRefresh(

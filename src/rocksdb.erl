@@ -70,8 +70,27 @@
   iterators/3,
   iterator_move/2,
   iterator_move_n/3,
+  %% cards#315 item 1: the same moves, key only.
+  iterator_move_key/2,
+  iterator_move_keys_n/3,
   iterator_refresh/1,
-  iterator_close/1
+  iterator_close/1,
+  %% cards#315 item 5: one NIF crossing for N keys.
+  multi_get/3, multi_get/4
+]).
+
+%% cards#315 items 2, 3 and 7: table properties, bulk build and ingest, and
+%% per-level column-family metadata.
+-export([
+  get_properties_of_all_tables/1, get_properties_of_all_tables/2,
+  get_properties_of_tables_in_range/3,
+  get_column_family_metadata/1, get_column_family_metadata/2,
+  sst_file_writer_open/2,
+  sst_file_writer_put/3,
+  sst_file_writer_delete/2,
+  sst_file_writer_finish/1,
+  sst_file_writer_close/1,
+  ingest_external_file/3, ingest_external_file/4
 ]).
 
 %% deprecated API
@@ -408,7 +427,80 @@
                          {tailing, boolean()} |
                          {total_order_seek, boolean()} |
                          {prefix_same_as_start, boolean()} |
+                         %% cards#315 item 6. readahead_size is bytes; 0 means
+                         %% RocksDB's own auto-readahead. async_io prefetches
+                         %% the next blocks of a scan while the current one is
+                         %% being served -- it needs a filesystem that supports
+                         %% it, and is a no-op where that support is absent
+                         %% rather than an error.
+                         {readahead_size, non_neg_integer()} |
+                         {async_io, boolean()} |
                          {snapshot, snapshot_handle()}].
+
+%% cards#315 item 2. One SST file's property block. `num_entries` is the field
+%% this exists for: it is the only exposed way to get a ROW COUNT without
+%% walking the rows. `get_approximate_sizes` answers in COMPRESSED BYTES and
+%% cannot stand in -- measured at 1,097,568 bytes for a type holding 20,000
+%% rows of 623 B, so dividing by a row size gives ~1,761 against a true 20,000.
+-type table_properties() :: #{
+    file_name := binary(),
+    num_entries := non_neg_integer(),
+    num_deletions := non_neg_integer(),
+    num_merge_operands := non_neg_integer(),
+    num_range_deletions := non_neg_integer(),
+    num_data_blocks := non_neg_integer(),
+    data_size := non_neg_integer(),
+    index_size := non_neg_integer(),
+    filter_size := non_neg_integer(),
+    raw_key_size := non_neg_integer(),
+    raw_value_size := non_neg_integer(),
+    creation_time := non_neg_integer(),
+    oldest_key_time := non_neg_integer(),
+    column_family_name := binary()
+}.
+
+%% cards#315 item 7. Per-level file listing and sizes, as structured data
+%% rather than the text `get_property/2` returns.
+-type sst_file_metadata() :: #{
+    file_name := binary(),
+    size := non_neg_integer(),
+    num_entries := non_neg_integer(),
+    num_deletions := non_neg_integer(),
+    smallest_key := binary(),
+    largest_key := binary(),
+    being_compacted := boolean()
+}.
+
+-type level_metadata() :: #{
+    level := integer(),
+    size := non_neg_integer(),
+    files := [sst_file_metadata()]
+}.
+
+-type cf_metadata() :: #{
+    name := binary(),
+    size := non_neg_integer(),
+    file_count := non_neg_integer(),
+    levels := [level_metadata()]
+}.
+
+-type sst_file_writer() :: reference() | binary().
+
+-type ingest_options() :: [{move_files, boolean()} |
+                           {snapshot_consistency, boolean()} |
+                           {allow_global_seqno, boolean()} |
+                           {allow_blocking_flush, boolean()} |
+                           {ingest_behind, boolean()} |
+                           {write_global_seqno, boolean()} |
+                           {verify_checksums_before_ingest, boolean()}].
+
+-type sst_file_info() :: #{
+    file_path := binary(),
+    smallest_key := binary(),
+    largest_key := binary(),
+    file_size := non_neg_integer(),
+    num_entries := non_neg_integer()
+}.
 
 -type write_options() :: [{sync, boolean()} |
                           {disable_wal, boolean()} |
@@ -1009,10 +1101,204 @@ iterator_move_n(_ITRHandle, _Direction, _Count) ->
     ?nif_stub.
 
 %% @doc
+%% As iterator_move/2, returning the KEY only.
+%%
+%% iterator_move/2 always returns `{ok, Key, Value}' and this NIF has copied the
+%% value into an Erlang binary before the caller ever matches on it. fold_keys/4
+%% looks like the answer and is not: it wraps the same iterator and drops the
+%% value in Erlang, after the copy.
+%%
+%% Measured on 100,000 rows, n=5, warm cache, identical keys and blocks with
+%% only the value size varied: 155.8 ms at 0 B, 178.0 at 100 B, 211.8 at 400 B,
+%% 256.8 at 1 KB, 636.2 at 4 KB. The slope is the copy, not the block read --
+%% RocksDB keeps keys and values in the same data block -- so this saves the
+%% copy and the garbage, and cold-cache the relative saving shrinks.
+-spec(iterator_move_key(ITRHandle, ITRAction) ->
+             {ok, Key::binary()} |
+             {error, invalid_iterator} |
+             {error, iterator_closed} when ITRHandle::itr_handle(),
+                                           ITRAction::iterator_action()).
+iterator_move_key(_ITRHandle, _ITRAction) ->
+  ?nif_stub.
+
+%% @doc
+%% As iterator_move_n/3, returning KEYS only. The iterator must already be
+%% positioned (via iterator_move/2 or iterator_move_key/2 with seek/first/last).
+-spec iterator_move_keys_n(ITRHandle, Direction, Count) ->
+    {ok, [Key::binary()]} when
+        ITRHandle :: itr_handle(),
+        Direction :: next | prev,
+        Count :: pos_integer().
+iterator_move_keys_n(_ITRHandle, _Direction, _Count) ->
+    ?nif_stub.
+
+%% @doc
 %% Refresh iterator
 -spec(iterator_refresh(ITRHandle) -> ok | {error, _} when ITRHandle::itr_handle()).
 iterator_refresh(_ITRHandle) ->
     ?nif_stub.
+
+%% @doc
+%% Retrieve many key/value pairs in one NIF call.
+%%
+%% cards#315 item 5. One result per key, IN THE ORDER THE KEYS WERE GIVEN, so a
+%% caller can zip the answers back against its own list. A key that is missing
+%% is `not_found' in its own position rather than an absence to be inferred
+%% from a shorter list.
+-spec multi_get(DBHandle, Keys, ReadOpts) -> Res when
+  DBHandle :: db_handle(),
+  Keys :: [binary()],
+  ReadOpts :: read_options(),
+  Res :: {ok, [{ok, binary()} | not_found | {error, any()}]}.
+multi_get(_DBHandle, _Keys, _ReadOpts) ->
+  ?nif_stub.
+
+%% @doc
+%% As multi_get/3, in the specified column family.
+-spec multi_get(DBHandle, CFHandle, Keys, ReadOpts) -> Res when
+  DBHandle :: db_handle(),
+  CFHandle :: cf_handle(),
+  Keys :: [binary()],
+  ReadOpts :: read_options(),
+  Res :: {ok, [{ok, binary()} | not_found | {error, any()}]}.
+multi_get(_DBHandle, _CFHandle, _Keys, _ReadOpts) ->
+  ?nif_stub.
+
+%% @doc
+%% Table properties of every SST file in the default column family.
+%%
+%% cards#315 item 2. This reads the property BLOCKS RocksDB already keeps, not
+%% the data blocks, so its cost is a function of the file count rather than the
+%% row count. `num_entries' summed over the files of a column family is the
+%% only exposed way to get a row count without walking the rows.
+-spec get_properties_of_all_tables(DBHandle) -> Res when
+  DBHandle :: db_handle(),
+  Res :: {ok, [table_properties()]} | {error, any()}.
+get_properties_of_all_tables(_DBHandle) ->
+  ?nif_stub.
+
+%% @doc
+%% As get_properties_of_all_tables/1, for one column family.
+-spec get_properties_of_all_tables(DBHandle, CFHandle) -> Res when
+  DBHandle :: db_handle(),
+  CFHandle :: cf_handle(),
+  Res :: {ok, [table_properties()]} | {error, any()}.
+get_properties_of_all_tables(_DBHandle, _CFHandle) ->
+  ?nif_stub.
+
+%% @doc
+%% Table properties of the SST files overlapping the given key ranges.
+%%
+%% Each range is `{Start, Limit}', Start inclusive and Limit exclusive. A file
+%% that overlaps several ranges is reported ONCE: the result is keyed by file
+%% name, so summing `num_entries' over it does not double count. It is also a
+%% file-level answer, not a row-level one -- a file that merely overlaps the
+%% range contributes all of its entries, so this bounds a count from above
+%% rather than giving it.
+-spec get_properties_of_tables_in_range(DBHandle, CFHandle, Ranges) -> Res when
+  DBHandle :: db_handle(),
+  CFHandle :: cf_handle(),
+  Ranges :: [{Start :: binary(), Limit :: binary()}],
+  Res :: {ok, [table_properties()]} | {error, any()}.
+get_properties_of_tables_in_range(_DBHandle, _CFHandle, _Ranges) ->
+  ?nif_stub.
+
+%% @doc
+%% Per-level file listing and sizes for the default column family.
+%%
+%% cards#315 item 7. `get_property/2' can answer some of this as text; this
+%% answers it as data, per file, including which files are being compacted.
+-spec get_column_family_metadata(DBHandle) -> Res when
+  DBHandle :: db_handle(),
+  Res :: {ok, cf_metadata()}.
+get_column_family_metadata(_DBHandle) ->
+  ?nif_stub.
+
+%% @doc
+%% As get_column_family_metadata/1, for one column family.
+-spec get_column_family_metadata(DBHandle, CFHandle) -> Res when
+  DBHandle :: db_handle(),
+  CFHandle :: cf_handle(),
+  Res :: {ok, cf_metadata()}.
+get_column_family_metadata(_DBHandle, _CFHandle) ->
+  ?nif_stub.
+
+%% @doc
+%% Open an SST file writer.
+%%
+%% cards#315 item 3: bulk-build a file and ingest it, instead of re-keying row
+%% by row through the write path.
+%%
+%% `CFOptions' must match the column family the file will be ingested into --
+%% comparator, compression and prefix extractor above all. A mismatch is
+%% refused at ingest time, not here.
+-spec sst_file_writer_open(Path, CFOptions) -> Res when
+  Path :: file:filename_all(),
+  CFOptions :: cf_options(),
+  Res :: {ok, sst_file_writer()} | {error, any()}.
+sst_file_writer_open(_Path, _CFOptions) ->
+  ?nif_stub.
+
+%% @doc
+%% Add a key/value pair to an SST file being written.
+%%
+%% Keys must be added in COMPARATOR ORDER. RocksDB refuses an out-of-order key
+%% rather than writing a file that cannot be read, and that refusal is returned
+%% here rather than swallowed.
+-spec sst_file_writer_put(Writer, Key, Value) -> ok | {error, any()} when
+  Writer :: sst_file_writer(),
+  Key :: binary(),
+  Value :: binary().
+sst_file_writer_put(_Writer, _Key, _Value) ->
+  ?nif_stub.
+
+%% @doc
+%% Add a deletion to an SST file being written.
+-spec sst_file_writer_delete(Writer, Key) -> ok | {error, any()} when
+  Writer :: sst_file_writer(),
+  Key :: binary().
+sst_file_writer_delete(_Writer, _Key) ->
+  ?nif_stub.
+
+%% @doc
+%% Finish an SST file and return what was written.
+%%
+%% The returned `num_entries' is what makes a bulk rewrite checkable: a file
+%% that quietly came out empty says so here, before anything ingests it.
+-spec sst_file_writer_finish(Writer) -> Res when
+  Writer :: sst_file_writer(),
+  Res :: {ok, sst_file_info()} | {error, any()}.
+sst_file_writer_finish(_Writer) ->
+  ?nif_stub.
+
+%% @doc
+%% Release an SST file writer. Idempotent, and safe after finish/1.
+-spec sst_file_writer_close(Writer) -> ok when Writer :: sst_file_writer().
+sst_file_writer_close(_Writer) ->
+  ?nif_stub.
+
+%% @doc
+%% Ingest SST files into the default column family.
+%%
+%% The files are added to the LSM tree without going through the memtable or
+%% the WAL. `{move_files, true}' renames them instead of copying, which is only
+%% safe when they sit on the same filesystem as the database.
+-spec ingest_external_file(DBHandle, Files, Opts) -> ok | {error, any()} when
+  DBHandle :: db_handle(),
+  Files :: [file:filename_all()],
+  Opts :: ingest_options().
+ingest_external_file(_DBHandle, _Files, _Opts) ->
+  ?nif_stub.
+
+%% @doc
+%% As ingest_external_file/3, into the specified column family.
+-spec ingest_external_file(DBHandle, CFHandle, Files, Opts) -> ok | {error, any()} when
+  DBHandle :: db_handle(),
+  CFHandle :: cf_handle(),
+  Files :: [file:filename_all()],
+  Opts :: ingest_options().
+ingest_external_file(_DBHandle, _CFHandle, _Files, _Opts) ->
+  ?nif_stub.
 
 %% @doc
 %% Close a iterator

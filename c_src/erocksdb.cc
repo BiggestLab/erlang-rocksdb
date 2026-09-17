@@ -17,6 +17,7 @@
 
 #include "atoms.h"
 #include "erocksdb.h"
+#include "sst_file_writer.h"
 #include "refobjects.h"
 #include "cache.h"
 #include "statistics.h"
@@ -54,6 +55,24 @@ static ErlNifFunc nif_funcs[] =
         {"set_db_background_threads", 2, erocksdb::SetDBBackgroundThreads, ERL_NIF_REGULAR_BOUND},
         {"try_catch_up_with_primary", 1, erocksdb::TryCatchUpWithPrimary, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
+        // cards#315: table properties and per-level metadata. These read the
+        // property blocks RocksDB already keeps, never the data blocks.
+        {"get_properties_of_all_tables", 1, erocksdb::GetPropertiesOfAllTables, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"get_properties_of_all_tables", 2, erocksdb::GetPropertiesOfAllTables, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"get_properties_of_tables_in_range", 3, erocksdb::GetPropertiesOfTablesInRange, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"get_column_family_metadata", 1, erocksdb::GetColumnFamilyMetaData, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"get_column_family_metadata", 2, erocksdb::GetColumnFamilyMetaData, ERL_NIF_DIRTY_JOB_IO_BOUND},
+
+        // cards#315: bulk build and ingest, instead of re-keying row by row
+        // through the write path.
+        {"sst_file_writer_open", 2, erocksdb::SstFileWriterOpen, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"sst_file_writer_put", 3, erocksdb::SstFileWriterPut, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"sst_file_writer_delete", 2, erocksdb::SstFileWriterDelete, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"sst_file_writer_finish", 1, erocksdb::SstFileWriterFinish, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"sst_file_writer_close", 1, erocksdb::SstFileWriterClose, ERL_NIF_REGULAR_BOUND},
+        {"ingest_external_file", 3, erocksdb::IngestExternalFile, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"ingest_external_file", 4, erocksdb::IngestExternalFile, ERL_NIF_DIRTY_JOB_IO_BOUND},
+
         {"get_approximate_sizes", 3, erocksdb::GetApproximateSizes, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get_approximate_sizes", 4, erocksdb::GetApproximateSizes, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get_approximate_memtable_stats", 3, erocksdb::GetApproximateMemTableStats, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -73,6 +92,8 @@ static ErlNifFunc nif_funcs[] =
         {"destroy_column_family", 2, erocksdb::DestroyColumnFamily, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
         // kv operations
+        {"multi_get", 3, erocksdb::MultiGet, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"multi_get", 4, erocksdb::MultiGet, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get", 3, erocksdb::Get, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"get", 4, erocksdb::Get, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"put", 4, erocksdb::Put, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -94,6 +115,8 @@ static ErlNifFunc nif_funcs[] =
         {"iterators", 3, erocksdb::Iterators, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"iterator_move", 2, erocksdb::IteratorMove, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"iterator_move_n", 3, erocksdb::IteratorMoveN, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"iterator_move_key", 2, erocksdb::IteratorMoveKey, ERL_NIF_DIRTY_JOB_IO_BOUND},
+        {"iterator_move_keys_n", 3, erocksdb::IteratorMoveKeysN, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"iterator_refresh", 1, erocksdb::IteratorRefresh, ERL_NIF_DIRTY_JOB_IO_BOUND},
         {"iterator_close", 1, erocksdb::IteratorClose, ERL_NIF_DIRTY_JOB_IO_BOUND},
 
@@ -372,6 +395,39 @@ ERL_NIF_TERM ATOM_ITERATE_LOWER_BOUND;
 ERL_NIF_TERM ATOM_TAILING;
 ERL_NIF_TERM ATOM_TOTAL_ORDER_SEEK;
 ERL_NIF_TERM ATOM_PREFIX_SAME_AS_START;
+ERL_NIF_TERM ATOM_READAHEAD_SIZE;
+ERL_NIF_TERM ATOM_ASYNC_IO;
+ERL_NIF_TERM ATOM_FILE_NAME;
+ERL_NIF_TERM ATOM_FILE_PATH;
+ERL_NIF_TERM ATOM_FILE_SIZE;
+ERL_NIF_TERM ATOM_FILE_COUNT;
+ERL_NIF_TERM ATOM_NUM_ENTRIES;
+ERL_NIF_TERM ATOM_NUM_DELETIONS;
+ERL_NIF_TERM ATOM_NUM_MERGE_OPERANDS;
+ERL_NIF_TERM ATOM_NUM_RANGE_DELETIONS;
+ERL_NIF_TERM ATOM_NUM_DATA_BLOCKS;
+ERL_NIF_TERM ATOM_DATA_SIZE;
+ERL_NIF_TERM ATOM_INDEX_SIZE;
+ERL_NIF_TERM ATOM_FILTER_SIZE;
+ERL_NIF_TERM ATOM_RAW_KEY_SIZE;
+ERL_NIF_TERM ATOM_RAW_VALUE_SIZE;
+ERL_NIF_TERM ATOM_CREATION_TIME;
+ERL_NIF_TERM ATOM_OLDEST_KEY_TIME;
+ERL_NIF_TERM ATOM_COLUMN_FAMILY_NAME;
+ERL_NIF_TERM ATOM_SMALLEST_KEY;
+ERL_NIF_TERM ATOM_LARGEST_KEY;
+ERL_NIF_TERM ATOM_BEING_COMPACTED;
+ERL_NIF_TERM ATOM_NAME;
+ERL_NIF_TERM ATOM_SIZE;
+ERL_NIF_TERM ATOM_LEVELS;
+ERL_NIF_TERM ATOM_FILES;
+ERL_NIF_TERM ATOM_MOVE_FILES;
+ERL_NIF_TERM ATOM_SNAPSHOT_CONSISTENCY;
+ERL_NIF_TERM ATOM_ALLOW_GLOBAL_SEQNO;
+ERL_NIF_TERM ATOM_ALLOW_BLOCKING_FLUSH;
+ERL_NIF_TERM ATOM_INGEST_BEHIND;
+ERL_NIF_TERM ATOM_WRITE_GLOBAL_SEQNO;
+ERL_NIF_TERM ATOM_VERIFY_CHECKSUMS_BEFORE_INGEST;
 ERL_NIF_TERM ATOM_SNAPSHOT;
 ERL_NIF_TERM ATOM_BAD_SNAPSHOT;
 
@@ -565,6 +621,7 @@ try
   erocksdb::RateLimiter::CreateRateLimiterType(env);
   erocksdb::SstFileManager::CreateSstFileManagerType(env);
   erocksdb::WriteBufferManager::CreateWriteBufferManagerType(env);
+  erocksdb::SstFileWriterObject::CreateSstFileWriterType(env);
 
   // must initialize atoms before processing options
 #define ATOM(Id, Value) { Id = enif_make_atom(env, Value); }
@@ -737,6 +794,39 @@ try
   ATOM(erocksdb::ATOM_TAILING,"tailing");
   ATOM(erocksdb::ATOM_TOTAL_ORDER_SEEK,"total_order_seek");
   ATOM(erocksdb::ATOM_PREFIX_SAME_AS_START,"prefix_same_as_start");
+  ATOM(erocksdb::ATOM_READAHEAD_SIZE,"readahead_size");
+  ATOM(erocksdb::ATOM_ASYNC_IO,"async_io");
+  ATOM(erocksdb::ATOM_FILE_NAME,"file_name");
+  ATOM(erocksdb::ATOM_FILE_PATH,"file_path");
+  ATOM(erocksdb::ATOM_FILE_SIZE,"file_size");
+  ATOM(erocksdb::ATOM_FILE_COUNT,"file_count");
+  ATOM(erocksdb::ATOM_NUM_ENTRIES,"num_entries");
+  ATOM(erocksdb::ATOM_NUM_DELETIONS,"num_deletions");
+  ATOM(erocksdb::ATOM_NUM_MERGE_OPERANDS,"num_merge_operands");
+  ATOM(erocksdb::ATOM_NUM_RANGE_DELETIONS,"num_range_deletions");
+  ATOM(erocksdb::ATOM_NUM_DATA_BLOCKS,"num_data_blocks");
+  ATOM(erocksdb::ATOM_DATA_SIZE,"data_size");
+  ATOM(erocksdb::ATOM_INDEX_SIZE,"index_size");
+  ATOM(erocksdb::ATOM_FILTER_SIZE,"filter_size");
+  ATOM(erocksdb::ATOM_RAW_KEY_SIZE,"raw_key_size");
+  ATOM(erocksdb::ATOM_RAW_VALUE_SIZE,"raw_value_size");
+  ATOM(erocksdb::ATOM_CREATION_TIME,"creation_time");
+  ATOM(erocksdb::ATOM_OLDEST_KEY_TIME,"oldest_key_time");
+  ATOM(erocksdb::ATOM_COLUMN_FAMILY_NAME,"column_family_name");
+  ATOM(erocksdb::ATOM_SMALLEST_KEY,"smallest_key");
+  ATOM(erocksdb::ATOM_LARGEST_KEY,"largest_key");
+  ATOM(erocksdb::ATOM_BEING_COMPACTED,"being_compacted");
+  ATOM(erocksdb::ATOM_NAME,"name");
+  ATOM(erocksdb::ATOM_SIZE,"size");
+  ATOM(erocksdb::ATOM_LEVELS,"levels");
+  ATOM(erocksdb::ATOM_FILES,"files");
+  ATOM(erocksdb::ATOM_MOVE_FILES,"move_files");
+  ATOM(erocksdb::ATOM_SNAPSHOT_CONSISTENCY,"snapshot_consistency");
+  ATOM(erocksdb::ATOM_ALLOW_GLOBAL_SEQNO,"allow_global_seqno");
+  ATOM(erocksdb::ATOM_ALLOW_BLOCKING_FLUSH,"allow_blocking_flush");
+  ATOM(erocksdb::ATOM_INGEST_BEHIND,"ingest_behind");
+  ATOM(erocksdb::ATOM_WRITE_GLOBAL_SEQNO,"write_global_seqno");
+  ATOM(erocksdb::ATOM_VERIFY_CHECKSUMS_BEFORE_INGEST,"verify_checksums_before_ingest");
   ATOM(erocksdb::ATOM_SNAPSHOT, "snapshot");
   ATOM(erocksdb::ATOM_BAD_SNAPSHOT, "bad_snapshot");
 
