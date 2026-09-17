@@ -230,6 +230,7 @@ endif()
 target_sources(${ErlangRocksDBNIF_TARGET}
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/erocksdb.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/io_uring_enable.cc
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/backup.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/batch.cc
