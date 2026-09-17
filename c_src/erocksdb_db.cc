@@ -168,6 +168,24 @@ ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptio
             if (enif_get_int(env, option[1], &total_threads))
                 opts.IncreaseParallelism(total_threads);
         }
+        else if (option[0] == erocksdb::ATOM_READ_ONLY)
+        {
+            // PersistenceStore#321. `read_only` is not a DBOptions field: read-only is
+            // selected by calling a different FUNCTION, OpenForReadOnly, which
+            // this binding exposes as open_readonly/3. Passing it here used to
+            // fall off the end of this chain and be answered `ok`.
+            //
+            // That is not hypothetical. PersistenceStore#320: db_lib asked for
+            // {read_only, ReadOnly} on every sealed archive, the request was
+            // discarded, and every archive opened WRITABLE for as long as the
+            // option had existed. The intent sat in the source, in a variable
+            // named ReadOnly, and had never once taken effect.
+            //
+            // Refused by name rather than ignored, because a caller asking for
+            // read-only and being told `ok` gets a writable store it believes
+            // is sealed.
+            return erocksdb::ATOM_BADARG;
+        }
         else if (option[0] == erocksdb::ATOM_CREATE_IF_MISSING)
             opts.create_if_missing = (option[1] == erocksdb::ATOM_TRUE);
         else if (option[0] == erocksdb::ATOM_CREATE_MISSING_COLUMN_FAMILIES)
