@@ -46,12 +46,21 @@ open_with_optimize_filters_for_hits_test() ->
    ?rm_rf("erocksdb.optimize_filters_for_hits.test"),
   ok.
 
+%% PersistenceStore#321. This case used to assert that open/2 ACCEPTS
+%% {new_table_reader_for_compaction_inputs, true}. It passed for the worst
+%% possible reason: the atom is defined nowhere in this binding, the field was
+%% removed from RocksDB, and the option fell through parse_db_option to be
+%% answered ok. The test documented a silent no-op as a feature.
+%%
+%% It now asserts what the caller is owed -- an option that cannot be applied is
+%% refused. This is the same mechanism that hid {read_only, true} and left every
+%% sealed archive writable.
 open_new_table_reader_for_compaction_inputs_test() ->
   ?rm_rf("erocksdb.new_table_reader_for_compaction_inputs.test"),
-  {ok, Ref} = rocksdb:open("erocksdb.new_table_reader_for_compaction_inputs.test",
-                  [{create_if_missing, true}, {new_table_reader_for_compaction_inputs, true}]),
-  ok = rocksdb:close(Ref),
-  rocksdb:destroy("erocksdb.new_table_reader_for_compaction_inputs.test", []),
+  ?assertError(badarg,
+               rocksdb:open("erocksdb.new_table_reader_for_compaction_inputs.test",
+                            [{create_if_missing, true},
+                             {new_table_reader_for_compaction_inputs, true}])),
   ok.
 
 

@@ -125,6 +125,7 @@ extern ERL_NIF_TERM ATOM_MAX_TABLE_FILES_SIZE;
 
 // Related to DBOptions
 extern ERL_NIF_TERM ATOM_TOTAL_THREADS;
+extern ERL_NIF_TERM ATOM_UNKNOWN_OPTION;
 extern ERL_NIF_TERM ATOM_READ_ONLY;
 extern ERL_NIF_TERM ATOM_CREATE_IF_MISSING;
 extern ERL_NIF_TERM ATOM_CREATE_MISSING_COLUMN_FAMILIES;
@@ -456,7 +457,10 @@ template <typename Acc> ERL_NIF_TERM fold(ErlNifEnv* env, ERL_NIF_TERM list,
     while (enif_get_list_cell(env, tail, &head, &tail))
     {
         ERL_NIF_TERM result = fun(env, head, acc);
-        if (result != erocksdb::ATOM_OK)
+        // PersistenceStore#321: ATOM_UNKNOWN_OPTION means "not mine", not
+        // "wrong". Only a caller that ran EVERY applicable parser can turn that
+        // into a refusal; see fold_db_and_cf_options.
+        if (result != erocksdb::ATOM_OK && result != erocksdb::ATOM_UNKNOWN_OPTION)
         {
             return result;
         }

@@ -318,6 +318,7 @@ ERL_NIF_TERM ATOM_MAX_TABLE_FILES_SIZE;
 
 // Related to DBOptions
 ERL_NIF_TERM ATOM_TOTAL_THREADS;
+ERL_NIF_TERM ATOM_UNKNOWN_OPTION;
 ERL_NIF_TERM ATOM_READ_ONLY;
 ERL_NIF_TERM ATOM_CREATE_IF_MISSING;
 ERL_NIF_TERM ATOM_CREATE_MISSING_COLUMN_FAMILIES;
@@ -756,6 +757,7 @@ try
 
   // Related to DBOptions
   ATOM(erocksdb::ATOM_TOTAL_THREADS, "total_threads");
+  ATOM(erocksdb::ATOM_UNKNOWN_OPTION, "unknown_option");
   ATOM(erocksdb::ATOM_READ_ONLY, "read_only");
   ATOM(erocksdb::ATOM_CREATE_IF_MISSING, "create_if_missing");
   ATOM(erocksdb::ATOM_CREATE_MISSING_COLUMN_FAMILIES, "create_missing_column_families");

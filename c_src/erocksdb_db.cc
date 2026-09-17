@@ -117,6 +117,39 @@ ERL_NIF_TERM parse_bbt_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::BlockB
     return erocksdb::ATOM_OK;
 }
 
+ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptions& opts);
+ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnFamilyOptions& opts);
+
+// PersistenceStore#321: an option list that BOTH parsers see.
+//
+// open/2 and its read-only and secondary forms hand one list to
+// parse_db_option and parse_cf_option in turn, and each legitimately ignores
+// the other's options. "Unknown" is therefore only decidable after both have
+// looked -- which is why neither parser can refuse on its own, and why an
+// option nobody applied used to be answered `ok`.
+//
+// PersistenceStore#320 is what that cost: {read_only, true} was asked for on
+// every sealed archive, discarded here, and every archive opened WRITABLE for
+// as long as the option had existed.
+ERL_NIF_TERM fold_db_and_cf_options(ErlNifEnv* env, ERL_NIF_TERM list,
+                                    rocksdb::DBOptions& db_opts,
+                                    rocksdb::ColumnFamilyOptions& cf_opts)
+{
+    ERL_NIF_TERM head, tail = list;
+    while (enif_get_list_cell(env, tail, &head, &tail))
+    {
+        ERL_NIF_TERM db = parse_db_option(env, head, db_opts);
+        if (db == erocksdb::ATOM_BADARG)
+            return db;
+        ERL_NIF_TERM cf = parse_cf_option(env, head, cf_opts);
+        if (cf == erocksdb::ATOM_BADARG)
+            return cf;
+        if (db == erocksdb::ATOM_UNKNOWN_OPTION && cf == erocksdb::ATOM_UNKNOWN_OPTION)
+            return erocksdb::ATOM_UNKNOWN_OPTION;
+    }
+    return erocksdb::ATOM_OK;
+}
+
 ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptions& opts)
 {
     {
@@ -447,8 +480,14 @@ ERL_NIF_TERM parse_db_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::DBOptio
         {
             opts.two_write_queues = (option[1] == erocksdb::ATOM_TRUE);
         }
+        else
+        {
+            // PersistenceStore#321: see parse_cf_option.
+            return erocksdb::ATOM_UNKNOWN_OPTION;
+        }
+        return erocksdb::ATOM_OK;
     }
-    return erocksdb::ATOM_OK;
+    return erocksdb::ATOM_UNKNOWN_OPTION;
 }
 
 ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnFamilyOptions& opts)
@@ -858,25 +897,25 @@ ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnF
           if (enif_get_double(env, option[1], &cutoff))
             opts.blob_garbage_collection_age_cutoff = cutoff;
         }
-        if(option[0] == erocksdb::ATOM_BLOB_GC_FORCE_THRESHOLD)
+        else if(option[0] == erocksdb::ATOM_BLOB_GC_FORCE_THRESHOLD)
         {
           double threshold;
           if (enif_get_double(env, option[1], &threshold))
             opts.blob_garbage_collection_force_threshold = threshold;
         }
-        if(option[0] == erocksdb::ATOM_BLOB_COMPACTION_READAHEAD_SIZE)
+        else if(option[0] == erocksdb::ATOM_BLOB_COMPACTION_READAHEAD_SIZE)
         {
           ErlNifUInt64 readahead_size;
           if (enif_get_uint64(env, option[1], &readahead_size))
             opts.blob_compaction_readahead_size = readahead_size;
         }
-        if(option[0] == erocksdb::ATOM_BLOB_FILE_STARTING_LEVEL)
+        else if(option[0] == erocksdb::ATOM_BLOB_FILE_STARTING_LEVEL)
         {
           int starting_level;
           if (enif_get_int(env, option[1], &starting_level))
             opts.blob_file_starting_level = starting_level;
         }
-        if(option[0] == erocksdb::ATOM_BLOB_CACHE)
+        else if(option[0] == erocksdb::ATOM_BLOB_CACHE)
         {
           erocksdb::Cache* cache_ptr = erocksdb::Cache::RetrieveCacheResource(env,option[1]);
           if(NULL!=cache_ptr) {
@@ -884,7 +923,7 @@ ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnF
             opts.blob_cache = cache;
           }
         }
-        if(option[0] == erocksdb::ATOM_PREPOLUATE_BLOB_CACHE)
+        else if(option[0] == erocksdb::ATOM_PREPOLUATE_BLOB_CACHE)
         {
           if (option[1] == erocksdb::ATOM_DISABLE)
           {
@@ -895,8 +934,17 @@ ERL_NIF_TERM parse_cf_option(ErlNifEnv* env, ERL_NIF_TERM item, rocksdb::ColumnF
             opts.prepopulate_blob_cache = rocksdb::PrepopulateBlobCache::kFlushOnly;
           }
         }
+        else
+        {
+            // PersistenceStore#321: not a column-family option this binding knows.
+            // NOT an error by itself -- open/2 folds this parser and
+            // parse_db_option over the SAME list, so each sees the other's
+            // options and only the CALLER can decide that nobody recognised it.
+            return erocksdb::ATOM_UNKNOWN_OPTION;
+        }
+        return erocksdb::ATOM_OK;
     }
-    return erocksdb::ATOM_OK;
+    return erocksdb::ATOM_UNKNOWN_OPTION;
 }
 
 
@@ -1101,8 +1149,7 @@ Open(
         {
             return enif_make_badarg(env);
         }
-        if (fold(env, argv[1], parse_db_option, *db_opts) != erocksdb::ATOM_OK ||
-            fold(env, argv[1], parse_cf_option, *cf_opts) != erocksdb::ATOM_OK)
+        if (fold_db_and_cf_options(env, argv[1], *db_opts, *cf_opts) != erocksdb::ATOM_OK)
         {
             return enif_make_badarg(env);
         }
@@ -1114,8 +1161,7 @@ Open(
         {
             return enif_make_badarg(env);
         }
-        if (fold(env, argv[2], parse_db_option, *db_opts) != erocksdb::ATOM_OK ||
-            fold(env, argv[2], parse_cf_option, *cf_opts) != erocksdb::ATOM_OK)
+        if (fold_db_and_cf_options(env, argv[2], *db_opts, *cf_opts) != erocksdb::ATOM_OK)
         {
             return enif_make_badarg(env);
         }
